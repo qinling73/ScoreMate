@@ -1,0 +1,6 @@
+{
+  "name": "多人实时游戏记分",
+  "description": "轻量化多人实时游戏记分应用，支持房间码加入、点对点/批量记分、自由与筹码模式、实时排行榜与流水播报，架构兼容微信小程序。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

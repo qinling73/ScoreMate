@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .shadow-brutal-sm {
+    box-shadow: 2px 2px 0px 0px #000000;
+  }
+  .shadow-brutal {
+    box-shadow: 4px 4px 0px 0px #000000;
+  }
+  .shadow-brutal-md {
+    box-shadow: 6px 6px 0px 0px #000000;
+  }
+  .shadow-brutal-lg {
+    box-shadow: 8px 8px 0px 0px #000000;
+  }
+  .shadow-brutal-active {
+    box-shadow: 0px 0px 0px 0px #000000;
+    transform: translate(3px, 3px);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translate(-50%, -12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-down {
+  animation: slideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-shake {
+  animation: shake 0.3s ease-in-out;
+}
+
+/* Custom scrollbar for game cards */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+}
+::-webkit-scrollbar-thumb {
+  background: #000000;
+  border-radius: 9999px;
+}
+
