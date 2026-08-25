@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { Room, Player, ScoreLog, ScoreUpdateBroadcast, RoomActionBroadcast } from '../types';
+import { Room, Player, ScoreLog, ScoreUpdateBroadcast, RoomActionBroadcast, DeductionProposal, RoomRetention } from '../types';
 import { getStoredToken } from './api';
 
 type EventCallback<T = any> = (data: T) => void;
@@ -22,8 +22,6 @@ class SocketService {
       }
       this.socket.disconnect();
     }
-
-    const token = getStoredToken();
 
     this.socket = io(window.location.origin, {
       transports: ['websocket', 'polling'],
@@ -68,6 +66,34 @@ class SocketService {
       this.notifyListeners('user_left', data);
     });
 
+    this.socket.on('deductions_proposed', (data: { room: Room; proposals: DeductionProposal[]; fromUserId: string; fromNickname: string; timestamp: number }) => {
+      this.notifyListeners('deductions_proposed', data);
+    });
+
+    this.socket.on('proposal_sent', (data: { count: number; message: string }) => {
+      this.notifyListeners('proposal_sent', data);
+    });
+
+    this.socket.on('deduction_resolved', (data: { proposal: DeductionProposal; accepted: boolean; room: Room; leaderboard: Player[]; newLog?: ScoreLog; timestamp: number }) => {
+      this.notifyListeners('deduction_resolved', data);
+    });
+
+    this.socket.on('dissolve_countdown_started', (data: { roomId: string; countdownSec: number; expiresAt: number; message: string; room: Room }) => {
+      this.notifyListeners('dissolve_countdown_started', data);
+    });
+
+    this.socket.on('dissolve_countdown_cancelled', (data: { roomId: string; reason: string; room: Room }) => {
+      this.notifyListeners('dissolve_countdown_cancelled', data);
+    });
+
+    this.socket.on('room_auto_dissolved', (data: { roomId: string; message: string; room: Room }) => {
+      this.notifyListeners('room_auto_dissolved', data);
+    });
+
+    this.socket.on('avatar_updated', (data: { roomId: string; userId: string; player: Player; room: Room }) => {
+      this.notifyListeners('avatar_updated', data);
+    });
+
     this.socket.on('error_message', (data: { message: string }) => {
       this.notifyListeners('error_message', data);
     });
@@ -90,6 +116,7 @@ class SocketService {
     targetUserIds: string[];
     amount: number;
     note?: string;
+    requireApprovalForDeduction?: boolean;
   }) {
     if (!this.socket || !this.socket.connected) {
       throw new Error('网络连接中，请稍后再试');
@@ -97,18 +124,42 @@ class SocketService {
     this.socket.emit('submit_score', payload);
   }
 
+  public respondDeduction(payload: {
+    roomId: string;
+    proposalId: string;
+    accepted: boolean;
+    responderUserId: string;
+  }) {
+    if (!this.socket || !this.socket.connected) {
+      throw new Error('网络连接中，请稍后再试');
+    }
+    this.socket.emit('respond_deduction', payload);
+  }
+
   public executeHostAction(payload: {
     roomId: string;
     hostUserId: string;
-    action: 'reset_scores' | 'kick_player' | 'change_mode' | 'set_initial_score' | 'close_room';
+    action: 'reset_scores' | 'kick_player' | 'change_mode' | 'set_initial_score' | 'set_retention' | 'close_room';
     targetUserId?: string;
     mode?: 'free' | 'zero_sum';
     initialScore?: number;
+    retention?: RoomRetention;
   }) {
     if (!this.socket || !this.socket.connected) {
       throw new Error('网络连接中，请稍后再试');
     }
     this.socket.emit('room_action', payload);
+  }
+
+  public updateAvatar(payload: {
+    roomId: string;
+    userId: string;
+    avatar: string;
+  }) {
+    if (!this.socket || !this.socket.connected) {
+      throw new Error('网络连接中，请稍后再试');
+    }
+    this.socket.emit('update_avatar', payload);
   }
 
   public on<T = any>(event: string, callback: EventCallback<T>): () => void {
@@ -143,3 +194,4 @@ class SocketService {
 }
 
 export const socketService = new SocketService();
+

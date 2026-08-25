@@ -1,8 +1,8 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import cors from 'cors';
-import { createServer as createViteServer } from 'vite';
 import { roomRouter } from './server/routes/room.js';
 import { setupSocketIO } from './server/socket.js';
 
@@ -41,15 +41,29 @@ async function startServer() {
   // Initialize Socket.io
   setupSocketIO(server);
 
-  // Vite middleware for development / static serving for production
-  if (process.env.NODE_ENV !== 'production') {
+  // Locate static files (robust for dist directory or project root)
+  let distPath = path.join(process.cwd(), 'dist');
+  if (!fs.existsSync(path.join(distPath, 'index.html'))) {
+    distPath = __dirname;
+  }
+  if (!fs.existsSync(path.join(distPath, 'index.html'))) {
+    distPath = path.resolve(__dirname, '..', 'dist');
+  }
+
+  const hasStaticFiles = fs.existsSync(path.join(distPath, 'index.html'));
+  const isCjsBundle = typeof __filename !== 'undefined' && __filename.endsWith('server.cjs');
+  const isProduction = process.env.NODE_ENV === 'production' || isCjsBundle || hasStaticFiles;
+
+  // Vite middleware for local development / pure static serving for production
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    console.log(`[Server] Serving static production files from: ${distPath}`);
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -64,3 +78,4 @@ async function startServer() {
 startServer().catch((err) => {
   console.error('[Server] Fatal startup error:', err);
 });
+

@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { GameMode } from '../types';
+import { GameMode, RoomRetention } from '../types';
 import { getStoredNickname, setStoredNickname } from '../services/api';
+import { getStoredAvatar, setStoredAvatar, DEFAULT_AVATAR } from '../utils/avatar';
+import { AvatarDisplay } from './AvatarDisplay';
+import { AvatarPickerModal } from './AvatarPickerModal';
 import { sounds } from '../utils/audio';
 import { 
   Gamepad2, 
@@ -11,22 +14,32 @@ import {
   Sliders, 
   ArrowRight,
   Sparkles,
-  Layers
+  Layers,
+  Server,
+  Clock,
+  Smile,
+  Edit3
 } from 'lucide-react';
 
 interface JoinCreateModalProps {
-  onJoin: (nickname: string, roomCode: string) => Promise<void>;
-  onCreate: (nickname: string, roomTitle: string, mode: GameMode, initialScore: number) => Promise<void>;
+  onJoin: (nickname: string, roomCode: string, avatar?: string) => Promise<void>;
+  onCreate: (nickname: string, roomTitle: string, mode: GameMode, initialScore: number, retention?: RoomRetention, avatar?: string) => Promise<void>;
   initialRoomCode?: string;
+  onOpenServerAdmin?: () => void;
 }
+
+const QUICK_AVATARS = ['🐱', '🐶', '🦊', '🐼', '🐰', '🦁', '👑', '🎲', '😎', '🤖'];
 
 export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
   onJoin,
   onCreate,
   initialRoomCode = '',
+  onOpenServerAdmin,
 }) => {
   const [activeTab, setActiveTab] = useState<'join' | 'create'>(initialRoomCode ? 'join' : 'create');
   const [nickname, setNickname] = useState<string>(getStoredNickname() || '');
+  const [avatar, setAvatar] = useState<string>(getStoredAvatar() || DEFAULT_AVATAR);
+  const [isAvatarPickerOpen, setIsAvatarPickerOpen] = useState<boolean>(false);
   
   // Join Tab State
   const [roomCode, setRoomCode] = useState<string>(initialRoomCode);
@@ -35,6 +48,7 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
   const [roomTitle, setRoomTitle] = useState<string>('');
   const [mode, setMode] = useState<GameMode>('free');
   const [initialScore, setInitialScore] = useState<number>(0);
+  const [retention, setRetention] = useState<RoomRetention>('offline_30s');
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
@@ -51,8 +65,14 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
     setErrorMessage('');
   };
 
+  const handleSelectAvatar = (newAvatar: string) => {
+    setAvatar(newAvatar);
+    setStoredAvatar(newAvatar);
+  };
+
   const handleJoinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     if (!nickname.trim()) {
       setErrorMessage('请输入玩家昵称 (2-16字符)');
       return;
@@ -66,7 +86,8 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
       setLoading(true);
       setErrorMessage('');
       setStoredNickname(nickname.trim());
-      await onJoin(nickname.trim(), roomCode.trim().toUpperCase());
+      setStoredAvatar(avatar);
+      await onJoin(nickname.trim(), roomCode.trim().toUpperCase(), avatar);
       sounds.playScoreSent();
     } catch (err: any) {
       setErrorMessage(err.message || '加入房间失败');
@@ -77,6 +98,7 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     if (!nickname.trim()) {
       setErrorMessage('请输入房主昵称 (2-16字符)');
       return;
@@ -86,11 +108,14 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
       setLoading(true);
       setErrorMessage('');
       setStoredNickname(nickname.trim());
+      setStoredAvatar(avatar);
       await onCreate(
         nickname.trim(),
         roomTitle.trim() || `${nickname.trim()}的记分房间`,
         mode,
-        initialScore
+        initialScore,
+        retention,
+        avatar
       );
       sounds.playScoreSent();
     } catch (err: any) {
@@ -102,14 +127,22 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
 
   return (
     <div className="min-h-screen bg-[#FFFDF9] flex flex-col items-center justify-center p-4 text-black relative overflow-hidden select-none">
+      {/* Avatar Picker Modal */}
+      <AvatarPickerModal
+        isOpen={isAvatarPickerOpen}
+        currentAvatar={avatar}
+        onClose={() => setIsAvatarPickerOpen(false)}
+        onSelectAvatar={handleSelectAvatar}
+      />
+
       {/* Neo-brutalist floating accents */}
       <div className="absolute top-8 left-8 w-16 h-16 bg-[#FFD93D] border-3 border-black rounded-2xl shadow-brutal -rotate-6 pointer-events-none hidden sm:block" />
       <div className="absolute bottom-12 right-12 w-20 h-20 bg-[#4ECDC4] border-3 border-black rounded-3xl shadow-brutal rotate-12 pointer-events-none hidden sm:block" />
       <div className="absolute top-1/3 right-8 w-12 h-12 bg-[#FF6B6B] border-3 border-black rounded-full shadow-brutal-sm pointer-events-none hidden sm:block" />
 
-      <div className="max-w-md w-full z-10 space-y-5">
+      <div className="max-w-md w-full z-10 space-y-4">
         {/* App Title & Intro Banner */}
-        <div className="text-center space-y-2">
+        <div className="text-center space-y-2 relative">
           <div className="inline-flex p-3 rounded-2xl bg-[#FFD93D] border-3 border-black text-black shadow-brutal-sm rotate-1">
             <Gamepad2 className="w-9 h-9 stroke-[2.5]" />
           </div>
@@ -117,12 +150,12 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
             多人实时游戏记分
           </h1>
           <p className="text-xs text-black/80 font-black max-w-xs mx-auto">
-            免繁琐注册 • 多人实时同步 • 自由/筹码模式 • 排行与流水播报
+            免繁琐注册 • 多人实时同步 • 自由/筹码模式 • 扣分同意与房间生命周期管理
           </p>
         </div>
 
         {/* Card Container */}
-        <div className="bg-white border-4 border-black rounded-[28px] p-6 shadow-brutal space-y-5 text-black">
+        <div className="bg-white border-4 border-black rounded-[28px] p-5 sm:p-6 shadow-brutal space-y-4 text-black">
           {/* Tab Switcher */}
           <div className="grid grid-cols-2 p-1.5 rounded-2xl bg-black/5 border-2 border-black">
             <button
@@ -152,6 +185,53 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
               <PlusCircle className="w-4 h-4 stroke-[2.5]" />
               <span>创建房间</span>
             </button>
+          </div>
+
+          {/* Avatar Selection Box */}
+          <div className="p-3 bg-[#FFFDF9] border-2 border-black rounded-2xl space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black flex items-center gap-1.5">
+                <Smile className="w-4 h-4 stroke-[2.5]" />
+                <span>选择我的头像</span>
+              </span>
+              <button
+                type="button"
+                id="open-avatar-picker-btn"
+                onClick={() => { sounds.playTap(); setIsAvatarPickerOpen(true); }}
+                className="text-[11px] font-black text-black bg-[#FFD93D] hover:bg-[#ffcd1a] px-2.5 py-1 rounded-lg border-2 border-black shadow-brutal-sm flex items-center gap-1 active:translate-x-0.5 active:translate-y-0.5"
+              >
+                <Edit3 className="w-3 h-3 stroke-[2.5]" />
+                <span>更多/自定义</span>
+              </button>
+            </div>
+
+            {/* Quick avatar selector */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1 no-scrollbar">
+              <div 
+                onClick={() => { sounds.playTap(); setIsAvatarPickerOpen(true); }}
+                className="shrink-0 cursor-pointer"
+                title="点击更换头像"
+              >
+                <AvatarDisplay avatar={avatar} nickname={nickname || '我'} size="lg" className="ring-2 ring-black" />
+              </div>
+
+              <div className="h-8 w-0.5 bg-black/20 shrink-0" />
+
+              {QUICK_AVATARS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => { sounds.playTap(); handleSelectAvatar(emoji); }}
+                  className={`w-9 h-9 shrink-0 rounded-xl border-2 border-black flex items-center justify-center text-lg transition-transform active:scale-90 ${
+                    avatar === emoji
+                      ? 'bg-[#FFD93D] ring-2 ring-black scale-110 shadow-brutal-sm'
+                      : 'bg-white hover:bg-black/5'
+                  }`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Error Message */}
@@ -317,6 +397,36 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
                 </div>
               </div>
 
+              {/* Retention Policy Selection */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-black uppercase text-black flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-black stroke-[2.5]" />
+                  <span>房间保留时长与离线策略</span>
+                </label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    { key: 'offline_30s', label: '离线30s解散', desc: '全员离线30秒后解散' },
+                    { key: '1h', label: '保持 1 小时', desc: '1小时后自动过期' },
+                    { key: '24h', label: '保持 24 小时', desc: '整天有效' },
+                    { key: 'permanent', label: '永久保留', desc: '不自动解散' },
+                  ].map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => { sounds.playTap(); setRetention(item.key as RoomRetention); }}
+                      className={`p-2 rounded-xl border-2 border-black text-left text-xs transition-all shadow-brutal-sm ${
+                        retention === item.key
+                          ? 'bg-[#FFD93D] text-black font-black ring-1 ring-black'
+                          : 'bg-white text-black hover:bg-black/5'
+                      }`}
+                    >
+                      <div className="font-black text-xs">{item.label}</div>
+                      <div className="text-[10px] opacity-75 mt-0.5">{item.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <button
                 id="create-room-submit-btn"
                 type="submit"
@@ -336,19 +446,35 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
           )}
         </div>
 
+        {/* Server Admin Entry Button */}
+        {onOpenServerAdmin && (
+          <div className="text-center">
+            <button
+              id="open-server-admin-btn"
+              type="button"
+              onClick={onOpenServerAdmin}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border-2 border-black text-xs font-black shadow-brutal-sm hover:bg-neutral-50 active:scale-95 transition-all text-neutral-800"
+            >
+              <Server className="w-4 h-4 text-neutral-600" />
+              <span>🖥️ 查看服务器所有房间与后台管理</span>
+            </button>
+          </div>
+        )}
+
         {/* Feature Highlights Footer */}
         <div className="grid grid-cols-3 gap-2 text-center text-[10px] text-black font-black">
           <div className="p-2.5 rounded-xl bg-white border-2 border-black shadow-brutal-sm">
-            🔒 会话安全恢复
+            🔒 扣分确认机制
           </div>
           <div className="p-2.5 rounded-xl bg-white border-2 border-black shadow-brutal-sm">
-            ⚡️ 毫秒级广播同步
+            ⚡️ 离线智能解散
           </div>
           <div className="p-2.5 rounded-xl bg-white border-2 border-black shadow-brutal-sm">
-            📱 小程序无缝接入
+            📱 手机全屏适配
           </div>
         </div>
       </div>
     </div>
   );
 };
+

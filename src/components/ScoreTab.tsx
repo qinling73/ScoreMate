@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Room, Player } from '../types';
 import { sounds } from '../utils/audio';
+import { AvatarDisplay } from './AvatarDisplay';
 import { 
   Users, 
   Send, 
@@ -181,15 +182,13 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
                   }`}
                 >
                   {/* Avatar */}
-                  <div
-                    className="w-8 h-8 rounded-xl border-2 border-black flex items-center justify-center font-black text-xs text-black shrink-0 relative shadow-brutal-sm"
-                    style={{ backgroundColor: member.avatarColor || '#FFD93D' }}
-                  >
-                    {member.nickname.slice(0, 1)}
-                    {member.isOnline && (
-                      <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-[#10B981] border border-black rounded-full" />
-                    )}
-                  </div>
+                  <AvatarDisplay
+                    avatar={member.avatar}
+                    avatarColor={member.avatarColor}
+                    nickname={member.nickname}
+                    isOnline={member.isOnline}
+                    size="sm"
+                  />
 
                   {/* Info */}
                   <div className="min-w-0 flex-1">
@@ -353,18 +352,25 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
 
       {/* 4. Real-time Calculation Summary Card */}
       {targetCount > 0 && (
-        <div className="bg-[#FFD93D] border-3 border-black rounded-2xl p-3.5 text-xs text-black font-bold space-y-1.5 animate-fade-in shadow-brutal">
+        <div className={`border-3 border-black rounded-2xl p-3.5 text-xs text-black font-bold space-y-1.5 animate-fade-in shadow-brutal ${
+          !isPositive ? 'bg-[#FFEAA7]' : 'bg-[#FFD93D]'
+        }`}>
           <div className="flex items-center justify-between">
             <span className="text-black/80">受分目标：</span>
             <span className="font-black">{targetCount} 位玩家</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-black/80">每人获得：</span>
+            <span className="text-black/80">每人分值：</span>
             <span className="font-black text-sm">
               {finalAmount > 0 ? `+${finalAmount}` : finalAmount} 分
             </span>
           </div>
-          {room.mode === 'zero_sum' && (
+          {!isPositive && (
+            <div className="flex items-center gap-1.5 text-xs text-amber-900 pt-1 border-t border-black/20 font-black">
+              <span>🛡️ 扣分需被扣分人确认同意后生效</span>
+            </div>
+          )}
+          {room.mode === 'zero_sum' && isPositive && (
             <div className="flex items-center justify-between pt-1.5 border-t-2 border-black font-black">
               <span>您将扣除筹码：</span>
               <span>
@@ -383,15 +389,17 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
         className={`w-full py-4 px-6 rounded-2xl font-black text-base uppercase tracking-wider flex items-center justify-center gap-2 border-3 border-black transition-all shadow-brutal active:translate-x-0.5 active:translate-y-0.5 active:shadow-none ${
           targetCount === 0
             ? 'bg-black/20 text-black/50 cursor-not-allowed border-black/30 shadow-none'
+            : !isPositive
+            ? 'bg-[#FF6B6B] text-white hover:bg-[#fa5252] active:scale-[0.98]'
             : 'bg-black text-white hover:bg-black/90 active:scale-[0.98]'
         }`}
       >
         {isSubmitting ? (
-          <span className="animate-pulse">正在同步记分...</span>
+          <span className="animate-pulse">正在发送...</span>
         ) : justSubmitted ? (
           <>
             <CheckCircle2 className="w-5 h-5 text-[#10B981] stroke-[3]" />
-            <span>记分成功！</span>
+            <span>{!isPositive ? '扣分申请已发出！' : '记分成功！'}</span>
           </>
         ) : (
           <>
@@ -399,11 +407,14 @@ export const ScoreTab: React.FC<ScoreTabProps> = ({
             <span>
               {targetCount === 0 
                 ? '请先勾选受分玩家' 
-                : `确认给分 (${isPositive ? '+' : ''}${finalAmount * targetCount} 分)`}
+                : !isPositive
+                ? `申请扣分 (${finalAmount * targetCount} 分 · 需对方同意)`
+                : `确认给分 (+${finalAmount * targetCount} 分)`}
             </span>
           </>
         )}
       </button>
+
     </div>
   );
 };

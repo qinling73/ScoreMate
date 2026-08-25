@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Room, Player, ScoreLog } from '../types';
 import { sounds } from '../utils/audio';
+import { copyToClipboard } from '../utils/clipboard';
+import { AvatarDisplay } from './AvatarDisplay';
 import { 
   ScrollText, 
   ArrowUpRight, 
@@ -11,15 +13,17 @@ import {
   Filter, 
   Coins, 
   Sparkles,
-  Calendar
+  Calendar,
+  Share2
 } from 'lucide-react';
 
 interface LogTabProps {
   room: Room;
   currentPlayer: Player | null;
+  onOpenShareModal?: (defaultType?: 'leaderboard' | 'logs') => void;
 }
 
-export const LogTab: React.FC<LogTabProps> = ({ room, currentPlayer }) => {
+export const LogTab: React.FC<LogTabProps> = ({ room, currentPlayer, onOpenShareModal }) => {
   const [subTab, setSubTab] = useState<'global' | 'my'>('global');
   const [copiedReport, setCopiedReport] = useState(false);
 
@@ -62,20 +66,19 @@ export const LogTab: React.FC<LogTabProps> = ({ room, currentPlayer }) => {
       `🎲 累计记录 ${logs.length} 笔流水`,
     ];
 
-    try {
-      await navigator.clipboard.writeText(lines.join('\n'));
+    const success = await copyToClipboard(lines.join('\n'));
+    if (success) {
       setCopiedReport(true);
       setTimeout(() => setCopiedReport(false), 2000);
-    } catch {
-      setCopiedReport(true);
-      setTimeout(() => setCopiedReport(false), 2000);
+    } else {
+      window.prompt('请长按或Ctrl+C复制战报：', lines.join('\n'));
     }
   };
 
   return (
     <div className="space-y-4 pb-20 select-none">
       {/* Sub-tab switcher and battle report copy */}
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
         <div className="flex bg-white border-2 border-black p-1 rounded-2xl shadow-brutal-sm">
           <button
             id="subtab-global"
@@ -101,14 +104,28 @@ export const LogTab: React.FC<LogTabProps> = ({ room, currentPlayer }) => {
           </button>
         </div>
 
-        <button
-          id="copy-report-btn"
-          onClick={handleCopyReport}
-          className="px-3 py-2 rounded-xl bg-white hover:bg-[#FFD93D] text-black border-2 border-black text-xs font-black flex items-center gap-1.5 shadow-brutal-sm active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-transform"
-        >
-          {copiedReport ? <Check className="w-4 h-4 text-black stroke-[3]" /> : <Copy className="w-4 h-4 stroke-[2.5]" />}
-          <span>{copiedReport ? '已复制战报' : '复制战报'}</span>
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onOpenShareModal && (
+            <button
+              id="share-logs-img-btn"
+              onClick={() => { sounds.playTap(); onOpenShareModal('logs'); }}
+              className="px-2.5 py-2 rounded-xl bg-white hover:bg-[#4ECDC4] text-black border-2 border-black text-xs font-black flex items-center gap-1 shadow-brutal-sm active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-transform"
+              title="生成流水长图"
+            >
+              <Share2 className="w-4 h-4 stroke-[2.5]" />
+              <span className="hidden sm:inline">导出长图</span>
+            </button>
+          )}
+
+          <button
+            id="copy-report-btn"
+            onClick={handleCopyReport}
+            className="px-3 py-2 rounded-xl bg-white hover:bg-[#FFD93D] text-black border-2 border-black text-xs font-black flex items-center gap-1.5 shadow-brutal-sm active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-transform"
+          >
+            {copiedReport ? <Check className="w-4 h-4 text-black stroke-[3]" /> : <Copy className="w-4 h-4 stroke-[2.5]" />}
+            <span>{copiedReport ? '已复制战报' : '复制战报'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Personal Ledger Summary Cards */}

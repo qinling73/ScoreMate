@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { Room, Session, Player, ScoreLog, GameMode } from './types.js';
+import { Room, Session, Player, ScoreLog, GameMode, RoomRetention, DeductionProposal } from './types.js';
 
 interface DatabaseSchema {
   rooms: Record<string, Room>; // key: roomId
@@ -18,6 +18,27 @@ const AVATAR_COLORS = [
   '#f97316', '#e11d48'
 ];
 
+export function sanitizeAvatarInput(avatar?: string): string | undefined {
+  if (!avatar || typeof avatar !== 'string') return undefined;
+  const trimmed = avatar.trim();
+  if (!trimmed) return undefined;
+  
+  // 1. Emoji or short preset (length <= 10)
+  if (trimmed.length <= 10) {
+    return trimmed;
+  }
+  
+  // 2. Base64 raster image data URL (strict jpeg, png, webp, gif only - no SVG or scripts)
+  if (trimmed.startsWith('data:image/')) {
+    const isSafeImage = /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(trimmed);
+    if (isSafeImage && trimmed.length <= 80000) {
+      return trimmed;
+    }
+  }
+  
+  return undefined;
+}
+
 class Database {
   private data: DatabaseSchema = {
     rooms: {},
@@ -25,9 +46,11 @@ class Database {
     sessions: {},
   };
   private saveTimeout: NodeJS.Timeout | null = null;
+  private dissolutionTimers: Record<string, NodeJS.Timeout> = {};
 
   constructor() {
     this.init();
+    this.startCleanupTicker();
   }
 
   private init() {
@@ -43,6 +66,14 @@ class Database {
           roomCodeMap: parsed.roomCodeMap || {},
           sessions: parsed.sessions || {},
         };
+        // Normalize room fields
+        for (const rid in this.data.rooms) {
+          const rm = this.data.rooms[rid];
+          if (!rm.retention) rm.retention = 'offline_30s';
+          if (!rm.pendingDeductions) rm.pendingDeductions = {};
+          // Reset any dangling countdown on boot
+          rm.dissolveCountdownExpiresAt = null;
+        }
         console.log(`[DB] Loaded ${Object.keys(this.data.rooms).length} rooms from ${DB_FILE}`);
       } else {
         this.persistImmediate();
@@ -51,6 +82,22 @@ class Database {
       console.error('[DB] Failed to load database, initializing fresh state:', err);
       this.data = { rooms: {}, roomCodeMap: {}, sessions: {} };
     }
+  }
+
+  private startCleanupTicker() {
+    // Periodic check for expired rooms (1h, 24h)
+    setInterval(() => {
+      const now = Date.now();
+      for (const roomId in this.data.rooms) {
+        const room = this.data.rooms[roomId];
+        if (room.status === 'active' && room.expiresAt && now > room.expiresAt) {
+          console.log(`[DB] Room ${room.code} reached expiration time (${room.retention}), closing.`);
+          room.status = 'closed';
+          room.updatedAt = now;
+          this.persist();
+        }
+      }
+    }, 30000);
   }
 
   private persist() {
@@ -88,11 +135,21 @@ class Database {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
   }
 
+  public calculateExpiresAt(retention: RoomRetention): number | null {
+    const now = Date.now();
+    if (retention === '1h') return now + 3600 * 1000;
+    if (retention === '24h') return now + 24 * 3600 * 1000;
+    if (retention === 'permanent' || retention === 'offline_30s') return null;
+    return null;
+  }
+
   public createRoom(params: {
     nickname: string;
+    avatar?: string;
     roomTitle?: string;
     mode?: GameMode;
     initialScore?: number;
+    retention?: RoomRetention;
   }): { room: Room; token: string; player: Player } {
     const roomId = 'rm_' + crypto.randomBytes(8).toString('hex');
     const code = this.generateRoomCode();
@@ -100,11 +157,15 @@ class Database {
     const token = 'tok_' + crypto.randomBytes(16).toString('hex');
     const initialScore = typeof params.initialScore === 'number' ? params.initialScore : 0;
     const mode = params.mode || 'free';
+    const retention: RoomRetention = params.retention || 'offline_30s';
     const now = Date.now();
+    const expiresAt = this.calculateExpiresAt(retention);
+    const safeAvatar = sanitizeAvatarInput(params.avatar);
 
     const hostPlayer: Player = {
       id: userId,
       nickname: params.nickname.trim(),
+      avatar: safeAvatar,
       score: initialScore,
       isHost: true,
       isOnline: true,
@@ -122,10 +183,14 @@ class Database {
       createdAt: now,
       updatedAt: now,
       status: 'active',
+      retention: retention,
+      expiresAt: expiresAt,
+      dissolveCountdownExpiresAt: null,
       members: {
         [userId]: hostPlayer,
       },
       logs: [],
+      pendingDeductions: {},
     };
 
     const session: Session = {
@@ -148,6 +213,7 @@ class Database {
   public joinRoom(params: {
     roomCode: string;
     nickname: string;
+    avatar?: string;
     token?: string;
   }): { room: Room; token: string; player: Player } | { error: string } {
     const code = params.roomCode.trim().toUpperCase();
@@ -159,10 +225,20 @@ class Database {
 
     const room = this.data.rooms[roomId];
     if (room.status === 'closed') {
-      return { error: '该房间已被房主解散' };
+      return { error: '该房间已被解散或已过期' };
     }
 
     const now = Date.now();
+    const safeAvatar = sanitizeAvatarInput(params.avatar);
+
+    // Reconnection cancels any pending offline dissolution
+    if (room.dissolveCountdownExpiresAt) {
+      room.dissolveCountdownExpiresAt = null;
+      if (this.dissolutionTimers[roomId]) {
+        clearTimeout(this.dissolutionTimers[roomId]);
+        delete this.dissolutionTimers[roomId];
+      }
+    }
 
     // Check if user has an existing session token for this room
     if (params.token && this.data.sessions[params.token]) {
@@ -173,6 +249,9 @@ class Database {
         if (params.nickname && params.nickname.trim() !== '') {
           room.members[sess.userId].nickname = params.nickname.trim();
           sess.nickname = params.nickname.trim();
+        }
+        if (safeAvatar) {
+          room.members[sess.userId].avatar = safeAvatar;
         }
         room.updatedAt = now;
         this.persist();
@@ -197,6 +276,9 @@ class Database {
         lastActiveAt: now,
       };
       existingPlayer.isOnline = true;
+      if (safeAvatar) {
+        existingPlayer.avatar = safeAvatar;
+      }
       room.updatedAt = now;
       this.persist();
       return { room, token: newToken, player: existingPlayer };
@@ -210,6 +292,7 @@ class Database {
     const newPlayer: Player = {
       id: userId,
       nickname: params.nickname.trim(),
+      avatar: safeAvatar,
       score: room.initialScore,
       isHost: Object.keys(room.members).length === 0,
       isOnline: true,
@@ -237,6 +320,24 @@ class Database {
     return { room, token: newToken, player: newPlayer };
   }
 
+  public updatePlayerAvatar(
+    roomId: string,
+    userId: string,
+    avatar: string
+  ): { room: Room; player: Player } | { error: string } {
+    const room = this.getRoom(roomId);
+    if (!room) return { error: '房间不存在' };
+    const player = room.members[userId];
+    if (!player) return { error: '玩家不存在' };
+
+    const safeAvatar = sanitizeAvatarInput(avatar);
+    player.avatar = safeAvatar;
+    room.updatedAt = Date.now();
+    this.persist();
+
+    return { room, player };
+  }
+
   public getSession(token: string): Session | null {
     if (!token) return null;
     return this.data.sessions[token] || null;
@@ -255,10 +356,183 @@ class Database {
     const room = this.data.rooms[roomId];
     if (room && room.members[userId]) {
       room.members[userId].isOnline = isOnline;
+      room.updatedAt = Date.now();
       this.persist();
     }
   }
 
+  // Check if all users are offline in this room, trigger 30s countdown if policy is offline_30s
+  public handleUserDisconnected(roomId: string, onDissolveCountdownStart?: (room: Room, countdownSec: number) => void, onRoomDissolved?: (room: Room) => void) {
+    const room = this.data.rooms[roomId];
+    if (!room || room.status === 'closed') return;
+
+    const onlineMembers = Object.values(room.members).filter((m) => m.isOnline);
+    if (onlineMembers.length === 0) {
+      // If room is not permanent and set to offline_30s (or general auto-cleanup)
+      if (room.retention === 'offline_30s') {
+        const countdownSec = 30;
+        const now = Date.now();
+        room.dissolveCountdownExpiresAt = now + countdownSec * 1000;
+        this.persist();
+
+        if (onDissolveCountdownStart) {
+          onDissolveCountdownStart(room, countdownSec);
+        }
+
+        // Cancel previous timer if any
+        if (this.dissolutionTimers[roomId]) {
+          clearTimeout(this.dissolutionTimers[roomId]);
+        }
+
+        this.dissolutionTimers[roomId] = setTimeout(() => {
+          // Double check if still empty
+          const curRoom = this.data.rooms[roomId];
+          if (curRoom && curRoom.status === 'active') {
+            const currentOnline = Object.values(curRoom.members).filter((m) => m.isOnline);
+            if (currentOnline.length === 0) {
+              console.log(`[DB] Room ${curRoom.code} auto-dissolved after 30s empty timeout.`);
+              curRoom.status = 'closed';
+              curRoom.dissolveCountdownExpiresAt = null;
+              curRoom.updatedAt = Date.now();
+              this.persist();
+              if (onRoomDissolved) {
+                onRoomDissolved(curRoom);
+              }
+            }
+          }
+          delete this.dissolutionTimers[roomId];
+        }, countdownSec * 1000);
+      }
+    }
+  }
+
+  public cancelDissolveCountdown(roomId: string): boolean {
+    const room = this.data.rooms[roomId];
+    if (room && room.dissolveCountdownExpiresAt) {
+      room.dissolveCountdownExpiresAt = null;
+      if (this.dissolutionTimers[roomId]) {
+        clearTimeout(this.dissolutionTimers[roomId]);
+        delete this.dissolutionTimers[roomId];
+      }
+      this.persist();
+      return true;
+    }
+    return false;
+  }
+
+  // Create Deduction Proposal (When someone tries to deduct points from another player)
+  public createDeductionProposal(params: {
+    roomId: string;
+    fromUserId: string;
+    targetUserId: string;
+    amount: number; // positive number of deduction, e.g. 10
+    note?: string;
+  }): { proposal: DeductionProposal; room: Room } | { error: string } {
+    const room = this.data.rooms[params.roomId];
+    if (!room) return { error: '房间不存在' };
+    if (room.status === 'closed') return { error: '房间已解散' };
+
+    const fromUser = room.members[params.fromUserId];
+    const targetUser = room.members[params.targetUserId];
+    if (!fromUser || !targetUser) return { error: '玩家不存在于房间中' };
+
+    const proposalId = 'prop_' + crypto.randomBytes(8).toString('hex');
+    const now = Date.now();
+
+    const proposal: DeductionProposal = {
+      id: proposalId,
+      roomId: room.id,
+      fromUserId: fromUser.id,
+      fromNickname: fromUser.nickname,
+      targetUserId: targetUser.id,
+      targetNickname: targetUser.nickname,
+      amount: Math.abs(params.amount),
+      note: params.note?.trim() || undefined,
+      status: 'pending',
+      createdAt: now,
+    };
+
+    if (!room.pendingDeductions) room.pendingDeductions = {};
+    room.pendingDeductions[proposalId] = proposal;
+    room.updatedAt = now;
+    this.persist();
+
+    return { proposal, room };
+  }
+
+  // Respond to Deduction Proposal (Target accepts or rejects)
+  public respondToDeductionProposal(params: {
+    roomId: string;
+    proposalId: string;
+    responderUserId: string;
+    accepted: boolean;
+  }): { room: Room; proposal: DeductionProposal; newLog?: ScoreLog } | { error: string } {
+    const room = this.data.rooms[params.roomId];
+    if (!room) return { error: '房间不存在' };
+    if (!room.pendingDeductions || !room.pendingDeductions[params.proposalId]) {
+      return { error: '扣分申请不存在或已过期' };
+    }
+
+    const proposal = room.pendingDeductions[params.proposalId];
+    if (proposal.targetUserId !== params.responderUserId) {
+      return { error: '只能由被扣分玩家本人进行确认' };
+    }
+
+    if (proposal.status !== 'pending') {
+      return { error: '该扣分申请已被处理' };
+    }
+
+    const now = Date.now();
+    const fromUser = room.members[proposal.fromUserId];
+    const targetUser = room.members[proposal.targetUserId];
+
+    if (params.accepted) {
+      proposal.status = 'accepted';
+
+      if (targetUser) {
+        // Execute deduction
+        targetUser.score -= proposal.amount;
+
+        // If zero-sum mode, fromUser receives the deducted amount
+        if (room.mode === 'zero_sum' && fromUser) {
+          fromUser.score += proposal.amount;
+        }
+
+        const log: ScoreLog = {
+          id: 'log_' + crypto.randomBytes(8).toString('hex'),
+          roomId: room.id,
+          fromUserId: proposal.fromUserId,
+          fromNickname: proposal.fromNickname,
+          toUserId: targetUser.id,
+          toNickname: targetUser.nickname,
+          amount: -proposal.amount,
+          mode: room.mode,
+          note: proposal.note ? `[本人已同意] ${proposal.note}` : `[本人已同意扣分]`,
+          timestamp: now,
+        };
+
+        room.logs.unshift(log);
+        if (room.logs.length > 500) room.logs = room.logs.slice(0, 500);
+
+        room.updatedAt = now;
+        delete room.pendingDeductions[params.proposalId];
+        this.persist();
+
+        return { room, proposal, newLog: log };
+      }
+    } else {
+      proposal.status = 'rejected';
+      room.updatedAt = now;
+      delete room.pendingDeductions[params.proposalId];
+      this.persist();
+
+      return { room, proposal };
+    }
+
+    return { error: '处理失败' };
+  }
+
+  // Direct score submit (Positive score additions or Host authorized adjustments)
   public submitScore(params: {
     roomId: string;
     fromUserId: string;
@@ -284,7 +558,6 @@ class Database {
 
     // Mode: Free vs Zero-sum
     if (room.mode === 'zero_sum') {
-      // In zero-sum mode: if giving +amount to each target, fromUser loses amount * count
       const totalCost = amount * validTargets.length;
       fromUser.score -= totalCost;
     }
@@ -310,7 +583,6 @@ class Database {
       newLogs.push(log);
     }
 
-    // Keep maximum 500 logs per room
     if (room.logs.length > 500) {
       room.logs = room.logs.slice(0, 500);
     }
@@ -324,10 +596,11 @@ class Database {
   public handleHostAction(params: {
     roomId: string;
     hostUserId: string;
-    action: 'reset_scores' | 'kick_player' | 'change_mode' | 'set_initial_score' | 'close_room';
+    action: 'reset_scores' | 'kick_player' | 'change_mode' | 'set_initial_score' | 'set_retention' | 'close_room';
     targetUserId?: string;
     mode?: GameMode;
     initialScore?: number;
+    retention?: RoomRetention;
   }): { room: Room; message: string } | { error: string } {
     const room = this.data.rooms[params.roomId];
     if (!room) return { error: '房间不存在' };
@@ -423,8 +696,28 @@ class Database {
         return { room, message: `新进成员初始分已设置为 ${params.initialScore}` };
       }
 
+      case 'set_retention': {
+        if (!params.retention) {
+          return { error: '请选择有效的房间保留策略' };
+        }
+        room.retention = params.retention;
+        room.expiresAt = this.calculateExpiresAt(params.retention);
+        room.dissolveCountdownExpiresAt = null;
+        room.updatedAt = now;
+        this.persist();
+
+        const labelMap: Record<RoomRetention, string> = {
+          'offline_30s': '全员离线30秒解散',
+          '1h': '保留1小时',
+          '24h': '保留24小时',
+          'permanent': '永久保留'
+        };
+        return { room, message: `房间生命周期已设为：${labelMap[params.retention]}` };
+      }
+
       case 'close_room': {
         room.status = 'closed';
+        room.dissolveCountdownExpiresAt = null;
         room.updatedAt = now;
         this.persist();
         return { room, message: '房间已成功解散' };
@@ -434,6 +727,82 @@ class Database {
         return { error: '未知管理指令' };
     }
   }
+
+  // Admin: Get all rooms list on server
+  public getAllRoomsForAdmin(): any[] {
+    const list: any[] = [];
+    for (const roomId in this.data.rooms) {
+      const r = this.data.rooms[roomId];
+      const members = Object.values(r.members);
+      const onlineCount = members.filter((m) => m.isOnline).length;
+      const host = r.members[r.hostId];
+
+      list.push({
+        id: r.id,
+        code: r.code,
+        title: r.title,
+        mode: r.mode,
+        hostNickname: host?.nickname || '未知',
+        memberCount: members.length,
+        onlineCount: onlineCount,
+        status: r.status,
+        retention: r.retention || 'offline_30s',
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        expiresAt: r.expiresAt,
+        dissolveCountdownExpiresAt: r.dissolveCountdownExpiresAt,
+      });
+    }
+
+    return list.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  // Admin: Delete or dissolve room completely
+  public adminDeleteRoom(roomId: string, hardDelete: boolean = true): { success: boolean; roomTitle?: string; roomCode?: string } {
+    const room = this.data.rooms[roomId];
+    if (!room) {
+      return { success: false };
+    }
+
+    const roomTitle = room.title;
+    const roomCode = room.code;
+
+    // 1. Cancel any active dissolution countdown timer
+    this.cancelDissolveCountdown(roomId);
+
+    // 2. Clean up all sessions tied to this room
+    for (const token in this.data.sessions) {
+      if (this.data.sessions[token].roomId === roomId) {
+        delete this.data.sessions[token];
+      }
+    }
+
+    // 3. Mark closed & remove from database
+    if (hardDelete) {
+      delete this.data.rooms[roomId];
+    } else {
+      room.status = 'closed';
+      room.dissolveCountdownExpiresAt = null;
+      room.updatedAt = Date.now();
+    }
+
+    this.persist();
+    return { success: true, roomTitle, roomCode };
+  }
+
+  public adminUpdateRetention(roomId: string, retention: RoomRetention): Room | null {
+    const room = this.data.rooms[roomId];
+    if (room) {
+      room.retention = retention;
+      room.expiresAt = this.calculateExpiresAt(retention);
+      room.dissolveCountdownExpiresAt = null;
+      room.updatedAt = Date.now();
+      this.persist();
+      return room;
+    }
+    return null;
+  }
 }
 
 export const db = new Database();
+

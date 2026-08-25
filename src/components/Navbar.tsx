@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Room, Player } from '../types';
 import { sounds } from '../utils/audio';
+import { copyToClipboard } from '../utils/clipboard';
+import { AvatarDisplay } from './AvatarDisplay';
 import { 
   Users, 
   Volume2, 
@@ -11,7 +13,9 @@ import {
   LogOut, 
   Crown,
   Sparkles,
-  ShieldAlert
+  ShieldAlert,
+  Server,
+  Image as ImageIcon
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -19,6 +23,9 @@ interface NavbarProps {
   currentPlayer: Player | null;
   onLeaveRoom: () => void;
   onShowQR: () => void;
+  onOpenServerAdmin?: () => void;
+  onOpenAvatarPicker?: () => void;
+  onOpenShareModal?: (defaultType?: 'leaderboard' | 'logs') => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -26,6 +33,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentPlayer,
   onLeaveRoom,
   onShowQR,
+  onOpenServerAdmin,
+  onOpenAvatarPicker,
+  onOpenShareModal,
 }) => {
   const [copied, setCopied] = useState(false);
   const [isMuted, setIsMuted] = useState(sounds.getIsMuted());
@@ -34,17 +44,15 @@ export const Navbar: React.FC<NavbarProps> = ({
   const totalMembersCount = Object.keys(room.members).length;
 
   const handleCopyCode = async () => {
-    try {
-      const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${room.code}`;
-      await navigator.clipboard.writeText(
-        `🎮 邀请你加入实时游戏记分房间【${room.title}】\n🔑 房间码：${room.code}\n🔗 链接：${inviteUrl}`
-      );
-      setCopied(true);
-      sounds.playTap();
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
+    sounds.playTap();
+    const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${room.code}`;
+    const text = `🎮 邀请你加入实时游戏记分房间【${room.title}】\n🔑 房间码：${room.code}\n🔗 链接：${inviteUrl}`;
+    const success = await copyToClipboard(text);
+    if (success) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    } else {
+      window.prompt('请长按或Ctrl+C复制房间信息：', text);
     }
   };
 
@@ -61,15 +69,25 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center justify-between gap-2">
           {/* Room Name & Code */}
           <div className="flex items-center gap-2.5 min-w-0">
+            {/* Clickable Avatar to edit */}
             <div 
-              className="w-9 h-9 rounded-xl border-2 border-black flex items-center justify-center font-black text-sm text-black shrink-0 shadow-brutal-sm"
-              style={{ backgroundColor: currentPlayer?.avatarColor || '#FFD93D' }}
+              onClick={() => { sounds.playTap(); onOpenAvatarPicker?.(); }}
+              className="cursor-pointer shrink-0 transition-transform active:scale-95"
+              title="点击更换我的头像"
             >
-              {currentPlayer?.nickname?.slice(0, 1) || '我'}
+              <AvatarDisplay
+                avatar={currentPlayer?.avatar}
+                avatarColor={currentPlayer?.avatarColor}
+                nickname={currentPlayer?.nickname || '我'}
+                isOnline={true}
+                size="md"
+                className="ring-2 ring-black"
+              />
             </div>
+
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <h1 className="text-base font-black truncate max-w-[130px] sm:max-w-[170px] text-black tracking-tight">
+                <h1 className="text-base font-black truncate max-w-[120px] sm:max-w-[160px] text-black tracking-tight">
                   {room.title}
                 </h1>
                 {currentPlayer?.isHost && (
@@ -97,6 +115,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action Icons */}
           <div className="flex items-center gap-1.5 shrink-0">
+            {/* Share Picture Modal */}
+            {onOpenShareModal && (
+              <button
+                id="nav-share-pic-btn"
+                onClick={() => { sounds.playTap(); onOpenShareModal('leaderboard'); }}
+                className="w-8 h-8 rounded-xl bg-[#FFD93D] hover:bg-[#ffce1f] text-black border-2 border-black shadow-brutal-sm active:translate-x-0.5 active:translate-y-0.5 active:shadow-none flex items-center justify-center transition-transform"
+                title="生成战报/流水长图"
+              >
+                <ImageIcon className="w-4 h-4 stroke-[2.5]" />
+              </button>
+            )}
+
             {/* Quick Share / QR Button */}
             <button
               id="nav-qr-btn"
@@ -106,6 +136,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Share2 className="w-4 h-4 stroke-[2.5]" />
             </button>
+
+            {/* Server Admin Modal Button */}
+            {onOpenServerAdmin && (
+              <button
+                id="nav-admin-btn"
+                onClick={onOpenServerAdmin}
+                className="w-8 h-8 rounded-xl bg-[#FFE66D] hover:bg-[#ffd93d] text-black border-2 border-black shadow-brutal-sm active:translate-x-0.5 active:translate-y-0.5 active:shadow-none flex items-center justify-center transition-transform"
+                title="服务器房间后台管理"
+              >
+                <Server className="w-4 h-4 stroke-[2.5]" />
+              </button>
+            )}
 
             {/* Sound Mute Toggle */}
             <button
@@ -161,3 +203,4 @@ export const Navbar: React.FC<NavbarProps> = ({
     </header>
   );
 };
+

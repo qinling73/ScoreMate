@@ -1,6 +1,7 @@
 import React from 'react';
 import { Room, Player } from '../types';
 import { sounds } from '../utils/audio';
+import { AvatarDisplay } from './AvatarDisplay';
 import confetti from 'canvas-confetti';
 import { 
   Trophy, 
@@ -11,19 +12,24 @@ import {
   Sparkles,
   ArrowRight,
   ShieldAlert,
-  Flame
+  Flame,
+  Share2
 } from 'lucide-react';
 
 interface LeaderboardTabProps {
   room: Room;
   currentPlayer: Player | null;
   onSelectPlayerToScore: (playerId: string) => void;
+  onOpenShareModal?: (defaultType?: 'leaderboard' | 'logs') => void;
+  onOpenAvatarPicker?: () => void;
 }
 
 export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
   room,
   currentPlayer,
   onSelectPlayerToScore,
+  onOpenShareModal,
+  onOpenAvatarPicker,
 }) => {
   const members = Object.values(room.members) as Player[];
   const sorted: Player[] = [...members].sort((a, b) => b.score - a.score);
@@ -64,17 +70,32 @@ export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
             </div>
           </div>
 
-          {leader && (
-            <button
-              id="celebrate-btn"
-              onClick={triggerCelebration}
-              className="px-3 py-2 rounded-xl bg-[#4ECDC4] hover:bg-[#3dbdb4] text-black border-2 border-black font-black text-xs flex items-center gap-1.5 shadow-brutal-sm active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-transform"
-              title="放礼花庆祝"
-            >
-              <Sparkles className="w-4 h-4 stroke-[2.5]" />
-              <span>庆祝</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {onOpenShareModal && (
+              <button
+                id="share-report-btn"
+                onClick={() => { sounds.playTap(); onOpenShareModal('leaderboard'); }}
+                className="px-3 py-2 rounded-xl bg-white hover:bg-[#FFD93D] text-black border-2 border-black font-black text-xs flex items-center gap-1.5 shadow-brutal-sm active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-transform"
+                title="生成并分享战报图片"
+              >
+                <Share2 className="w-4 h-4 stroke-[2.5]" />
+                <span className="hidden sm:inline">生成战报长图</span>
+                <span className="sm:hidden">分享长图</span>
+              </button>
+            )}
+
+            {leader && (
+              <button
+                id="celebrate-btn"
+                onClick={triggerCelebration}
+                className="px-3 py-2 rounded-xl bg-[#4ECDC4] hover:bg-[#3dbdb4] text-black border-2 border-black font-black text-xs flex items-center gap-1.5 shadow-brutal-sm active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-transform"
+                title="放礼花庆祝"
+              >
+                <Sparkles className="w-4 h-4 stroke-[2.5]" />
+                <span>庆祝</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Highlight Score Gap */}
@@ -149,16 +170,16 @@ export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="shrink-0">{rankBadge}</div>
 
-                  {/* Avatar */}
-                  <div
-                    className="w-10 h-10 rounded-xl border-2 border-black flex items-center justify-center font-black text-xs text-black shrink-0 relative shadow-brutal-sm"
-                    style={{ backgroundColor: player.avatarColor || '#FFD93D' }}
-                  >
-                    {player.nickname.slice(0, 1)}
-                    {player.isOnline && (
-                      <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-[#10B981] border border-black rounded-full" />
-                    )}
-                  </div>
+                  {/* Avatar with Click to edit if current user */}
+                  <AvatarDisplay
+                    avatar={player.avatar}
+                    avatarColor={player.avatarColor}
+                    nickname={player.nickname}
+                    isOnline={player.isOnline}
+                    size="md"
+                    onClick={isCurrent ? onOpenAvatarPicker : undefined}
+                    className={isCurrent ? 'ring-2 ring-black' : ''}
+                  />
 
                   {/* Nickname & Badges */}
                   <div className="min-w-0">
@@ -167,11 +188,15 @@ export const LeaderboardTab: React.FC<LeaderboardTabProps> = ({
                         {player.nickname}
                       </span>
                       {isCurrent && (
-                        <span className={`text-[10px] px-1.5 py-0.2 rounded border font-black ${
-                          isLowest 
-                            ? 'bg-white text-black border-white' 
-                            : 'bg-black text-white border-black'
-                        }`}>
+                        <span 
+                          onClick={onOpenAvatarPicker}
+                          title="点击更换我的头像"
+                          className={`text-[10px] px-1.5 py-0.2 rounded border font-black cursor-pointer ${
+                            isLowest 
+                              ? 'bg-white text-black border-white' 
+                              : 'bg-black text-white border-black'
+                          }`}
+                        >
                           我
                         </span>
                       )}

@@ -1,13 +1,16 @@
 export type GameMode = 'free' | 'zero_sum';
 
+export type RoomRetention = 'offline_30s' | '1h' | '24h' | 'permanent';
+
 export interface Player {
   id: string;
   nickname: string;
+  avatar?: string;
+  avatarColor: string;
   score: number;
   isHost: boolean;
   isOnline: boolean;
   joinedAt: number;
-  avatarColor: string;
 }
 
 export interface ScoreLog {
@@ -23,6 +26,19 @@ export interface ScoreLog {
   timestamp: number;
 }
 
+export interface DeductionProposal {
+  id: string;
+  roomId: string;
+  fromUserId: string;
+  fromNickname: string;
+  targetUserId: string;
+  targetNickname: string;
+  amount: number; // positive number representing the deduction magnitude (e.g. 10 means deduct 10)
+  note?: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'expired';
+  createdAt: number;
+}
+
 export interface Room {
   id: string;
   code: string; // 6-digit uppercase alphanumeric
@@ -33,8 +49,12 @@ export interface Room {
   createdAt: number;
   updatedAt: number;
   status: 'active' | 'closed';
+  retention: RoomRetention;
+  expiresAt?: number | null; // null for permanent
+  dissolveCountdownExpiresAt?: number | null; // timestamp when 30s countdown ends
   members: Record<string, Player>;
   logs: ScoreLog[];
+  pendingDeductions?: Record<string, DeductionProposal>;
 }
 
 export interface Session {
@@ -51,6 +71,7 @@ export interface CreateRoomRequest {
   roomTitle?: string;
   mode?: GameMode;
   initialScore?: number;
+  retention?: RoomRetention;
 }
 
 export interface JoinRoomRequest {
@@ -64,11 +85,20 @@ export interface SubmitScorePayload {
   targetUserIds: string[];
   amount: number;
   note?: string;
+  requireApprovalForDeduction?: boolean;
+}
+
+export interface DeductionResponsePayload {
+  proposalId: string;
+  accepted: boolean;
+  responderUserId: string;
 }
 
 export interface RoomActionPayload {
-  action: 'reset_scores' | 'kick_player' | 'change_mode' | 'set_initial_score' | 'close_room';
+  action: 'reset_scores' | 'kick_player' | 'change_mode' | 'set_initial_score' | 'set_retention' | 'close_room';
   targetUserId?: string;
   mode?: GameMode;
   initialScore?: number;
+  retention?: RoomRetention;
 }
+

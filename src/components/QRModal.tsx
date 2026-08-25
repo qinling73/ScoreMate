@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Room } from '../types';
 import { sounds } from '../utils/audio';
+import { copyToClipboard } from '../utils/clipboard';
 import { X, Copy, Check, Share2, Smartphone, QrCode } from 'lucide-react';
 
 interface QRModalProps {
@@ -23,13 +24,13 @@ export const QRModal: React.FC<QRModalProps> = ({ room, isOpen, onClose }) => {
   const handleCopy = async () => {
     sounds.playTap();
     const text = `🎮 邀请你加入实时游戏记分房间【${room.title}】\n🔑 房间码：${room.code}\n🔗 链接：${inviteUrl}`;
-    try {
-      await navigator.clipboard.writeText(text);
+    const success = await copyToClipboard(text);
+    if (success) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    } else {
+      // Direct prompt fallback if browser blocks both clipboard methods
+      window.prompt('请长按或Ctrl+C复制邀请信息：', text);
     }
   };
 

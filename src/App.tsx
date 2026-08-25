@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Room, Player, ScoreLog, GameMode } from './types';
-import { api, getStoredToken, removeStoredToken, getStoredNickname } from './services/api';
+import { Room, Player, ScoreLog, GameMode, DeductionProposal, RoomRetention } from './types';
+import { api, getStoredToken, removeStoredToken, getStoredNickname, getStoredRoomCode } from './services/api';
 import { socketService } from './services/socket';
 import { sounds } from './utils/audio';
 import confetti from 'canvas-confetti';
@@ -11,14 +11,20 @@ import { LogTab } from './components/LogTab';
 import { RoomManageTab } from './components/RoomManageTab';
 import { JoinCreateModal } from './components/JoinCreateModal';
 import { QRModal } from './components/QRModal';
-import { LiveNotification } from './components/LiveNotification';
+import { LiveNotification, CustomNotification } from './components/LiveNotification';
+import { DeductionConfirmModal } from './components/DeductionConfirmModal';
+import { ServerAdminModal } from './components/ServerAdminModal';
+import { AvatarPickerModal } from './components/AvatarPickerModal';
+import { ShareImageModal } from './components/ShareImageModal';
+import { setStoredAvatar } from './utils/avatar';
 import { 
   Gamepad2, 
   Trophy, 
   ScrollText, 
   Settings, 
   WifiOff, 
-  Loader2 
+  Loader2,
+  AlertTriangle
 } from 'lucide-react';
 
 type TabType = 'score' | 'leaderboard' | 'logs' | 'manage';
@@ -29,10 +35,32 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('score');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [showQR, setShowQR] = useState<boolean>(false);
+  const [showServerAdmin, setShowServerAdmin] = useState<boolean>(false);
+  const [hasAdminAccess, setHasAdminAccess] = useState<boolean>(false);
   const [isConnected, setIsConnected] = useState<boolean>(true);
   const [latestLog, setLatestLog] = useState<ScoreLog | null>(null);
   const [systemMessage, setSystemMessage] = useState<string | null>(null);
+  const [customNotification, setCustomNotification] = useState<CustomNotification | null>(null);
   const [urlRoomCode, setUrlRoomCode] = useState<string>('');
+  const [isAvatarPickerOpen, setIsAvatarPickerOpen] = useState<boolean>(false);
+  const [shareModalConfig, setShareModalConfig] = useState<{ isOpen: boolean; defaultType: 'leaderboard' | 'logs' }>({
+    isOpen: false,
+    defaultType: 'leaderboard',
+  });
+
+  // Check admin privileges on initial load (only internal IP addresses are granted access)
+  useEffect(() => {
+    api.checkAdminAccess()
+      .then((res) => {
+        setHasAdminAccess(Boolean(res.hasAdminAccess));
+      })
+      .catch(() => {
+        setHasAdminAccess(false);
+      });
+  }, []);
+
+  // Pending deduction proposal for current user
+  const [activeProposal, setActiveProposal] = useState<DeductionProposal | null>(null);
 
   // Target player selection forwarded to ScoreTab
   const [preselectedTargetId, setPreselectedTargetId] = useState<string | null>(null);
@@ -59,7 +87,7 @@ export default function App() {
 
       try {
         const urlParams = new URLSearchParams(window.location.search);
-        const code = urlParams.get('room');
+        const code = urlParams.get('room') || getStoredRoomCode();
 
         if (code && nickname) {
           const res = await api.joinRoom({
@@ -69,9 +97,10 @@ export default function App() {
           });
           setCurrentRoom(res.room);
           setCurrentPlayer(res.player);
+          setUrlRoomCode(res.room.code);
+          window.history.replaceState({}, document.title, `?room=${res.room.code}`);
           socketService.connect(res.room.id, res.player.id, res.player.nickname);
         } else {
-          // If we have token, we can join with saved nickname if available
           setIsLoading(false);
           return;
         }
@@ -133,13 +162,139 @@ export default function App() {
 
     const unsubJoin = socketService.on('user_joined', (data: { player: Player }) => {
       if (data.player.id !== currentPlayer.id) {
-        setSystemMessage(`【${data.player.nickname}】进入了房间`);
+        setCustomNotification({
+          id: 'join_' + Date.now() + Math.random(),
+          type: 'join',
+          title: `👋 【${data.player.nickname}】进入了房间`,
+          subtitle: `当前房间共 ${Object.keys(currentRoom.members).length + 1} 位玩家`,
+          timestamp: Date.now(),
+        });
       }
     });
 
     const unsubLeft = socketService.on('user_left', (data: { nickname?: string }) => {
       if (data.nickname) {
-        setSystemMessage(`【${data.nickname}】离开了房间`);
+        setCustomNotification({
+          id: 'leave_' + Date.now() + Math.random(),
+          type: 'leave',
+          title: `💨 【${data.nickname}】已退出/离线`,
+          timestamp: Date.now(),
+        });
+      }
+    });
+
+    // 1. Deduction Proposals Event
+    const unsubDeductions = socketService.on('deductions_proposed', (data: {
+      room: Room;
+      proposals: DeductionProposal[];
+      fromUserId: string;
+      fromNickname: string;
+    }) => {
+      setCurrentRoom(data.room);
+      // Check if current user is the target of any proposal
+      const myProposal = data.proposals.find((p) => p.targetUserId === currentPlayer.id);
+      if (myProposal) {
+        setActiveProposal(myProposal);
+        sounds.playNotification();
+      } else if (data.fromUserId !== currentPlayer.id) {
+        // Broad notification for others
+        const targets = data.proposals.map((p) => p.targetNickname).join('、');
+        setCustomNotification({
+          id: 'prop_' + Date.now() + Math.random(),
+          type: 'deduct_request',
+          title: `⚡️ ${data.fromNickname} 向 ${targets} 申请扣分`,
+          subtitle: '正在等待对方确认同意...',
+          timestamp: Date.now(),
+        });
+      }
+    });
+
+    const unsubProposalSent = socketService.on('proposal_sent', (data: { message: string }) => {
+      setSystemMessage(data.message);
+    });
+
+    // 2. Deduction Resolved Event
+    const unsubDeductionResolved = socketService.on('deduction_resolved', (data: {
+      proposal: DeductionProposal;
+      accepted: boolean;
+      room: Room;
+      newLog?: ScoreLog;
+    }) => {
+      setCurrentRoom(data.room);
+      if (currentPlayer && data.room.members[currentPlayer.id]) {
+        setCurrentPlayer(data.room.members[currentPlayer.id]);
+      }
+
+      // Close modal if it was this proposal
+      if (activeProposal && activeProposal.id === data.proposal.id) {
+        setActiveProposal(null);
+      }
+
+      if (data.accepted) {
+        sounds.playScoreSent();
+        setCustomNotification({
+          id: 'deduct_res_' + Date.now(),
+          type: 'deduct_accepted',
+          title: `✅ ${data.proposal.targetNickname} 同意了扣分申请 (-${data.proposal.amount}分)`,
+          subtitle: data.proposal.note ? `备注：${data.proposal.note}` : undefined,
+          timestamp: Date.now(),
+        });
+        if (data.newLog) {
+          setLatestLog(data.newLog);
+        }
+      } else {
+        sounds.playTap();
+        setCustomNotification({
+          id: 'deduct_res_' + Date.now(),
+          type: 'deduct_rejected',
+          title: `❌ ${data.proposal.targetNickname} 拒绝了扣分申请 (-${data.proposal.amount}分)`,
+          timestamp: Date.now(),
+        });
+      }
+    });
+
+    // 3. Dissolve Countdown Started Event (30s grace period)
+    const unsubDissolveStarted = socketService.on('dissolve_countdown_started', (data: {
+      message: string;
+      room: Room;
+    }) => {
+      setCurrentRoom(data.room);
+      setCustomNotification({
+        id: 'dissolve_' + Date.now(),
+        type: 'dissolve_warn',
+        title: '⚠️ 全员离线警告：30秒后将自动解散房间',
+        subtitle: '重新进入房间可自动取消解散倒计时',
+        timestamp: Date.now(),
+      });
+    });
+
+    // 4. Dissolve Countdown Cancelled Event
+    const unsubDissolveCancelled = socketService.on('dissolve_countdown_cancelled', (data: {
+      room: Room;
+      reason: string;
+    }) => {
+      setCurrentRoom(data.room);
+      setCustomNotification({
+        id: 'dissolve_cancel_' + Date.now(),
+        type: 'system',
+        title: '✅ 玩家已重新连接，自动解散已取消',
+        timestamp: Date.now(),
+      });
+    });
+
+    // 5. Room Auto Dissolved Event
+    const unsubAutoDissolved = socketService.on('room_auto_dissolved', (data: {
+      message: string;
+    }) => {
+      alert(data.message || '房间由于全员离线已自动解散');
+      handleLeaveRoom();
+    });
+
+    // 6. Avatar Updated Event
+    const unsubAvatar = socketService.on('avatar_updated', (data: { userId: string; avatar: string; room: Room }) => {
+      setCurrentRoom(data.room);
+      if (currentPlayer && currentPlayer.id === data.userId) {
+        setCurrentPlayer((prev) => (prev ? { ...prev, avatar: data.avatar } : null));
       }
     });
 
@@ -153,15 +308,24 @@ export default function App() {
       unsubAction();
       unsubJoin();
       unsubLeft();
+      unsubDeductions();
+      unsubProposalSent();
+      unsubDeductionResolved();
+      unsubDissolveStarted();
+      unsubDissolveCancelled();
+      unsubAutoDissolved();
+      unsubAvatar();
       unsubConn();
     };
-  }, [currentRoom?.id, currentPlayer?.id]);
+  }, [currentRoom?.id, currentPlayer?.id, activeProposal?.id]);
 
   // Join Room Handler
-  const handleJoinRoom = async (nickname: string, roomCode: string) => {
-    const res = await api.joinRoom({ nickname, roomCode });
+  const handleJoinRoom = async (nickname: string, roomCode: string, avatar?: string) => {
+    const res = await api.joinRoom({ nickname, roomCode, avatar });
     setCurrentRoom(res.room);
     setCurrentPlayer(res.player);
+    setUrlRoomCode(res.room.code);
+    window.history.replaceState({}, document.title, `?room=${res.room.code}`);
     socketService.connect(res.room.id, res.player.id, res.player.nickname);
   };
 
@@ -170,12 +334,59 @@ export default function App() {
     nickname: string,
     roomTitle: string,
     mode: GameMode,
-    initialScore: number
+    initialScore: number,
+    retention?: RoomRetention,
+    avatar?: string
   ) => {
-    const res = await api.createRoom({ nickname, roomTitle, mode, initialScore });
+    const res = await api.createRoom({ nickname, roomTitle, mode, initialScore, retention, avatar });
     setCurrentRoom(res.room);
     setCurrentPlayer(res.player);
+    setUrlRoomCode(res.room.code);
+    window.history.replaceState({}, document.title, `?room=${res.room.code}`);
     socketService.connect(res.room.id, res.player.id, res.player.nickname);
+  };
+
+  // Dynamic Avatar Update Handler (Real-time sync)
+  const handleUpdateAvatar = async (newAvatar: string) => {
+    if (!currentRoom || !currentPlayer) return;
+    setStoredAvatar(newAvatar);
+    
+    // Optimistic local update
+    setCurrentPlayer((prev) => (prev ? { ...prev, avatar: newAvatar } : null));
+    setCurrentRoom((prev) => {
+      if (!prev) return null;
+      const mem = prev.members[currentPlayer.id];
+      if (!mem) return prev;
+      return {
+        ...prev,
+        members: {
+          ...prev.members,
+          [currentPlayer.id]: { ...mem, avatar: newAvatar },
+        },
+      };
+    });
+
+    try {
+      socketService.updateAvatar({
+        roomId: currentRoom.id,
+        userId: currentPlayer.id,
+        avatar: newAvatar,
+      });
+    } catch {
+      await api.updateAvatar(currentRoom.id, {
+        userId: currentPlayer.id,
+        avatar: newAvatar,
+      });
+    }
+  };
+
+  // Open Share Modal
+  const handleOpenShareModal = (defaultType: 'leaderboard' | 'logs' = 'leaderboard') => {
+    sounds.playTap();
+    setShareModalConfig({
+      isOpen: true,
+      defaultType,
+    });
   };
 
   // Submit Score Handler
@@ -206,12 +417,33 @@ export default function App() {
     }
   };
 
+  // Respond Deduction Proposal Handler
+  const handleRespondDeduction = async (proposalId: string, accepted: boolean) => {
+    if (!currentRoom || !currentPlayer) return;
+    try {
+      socketService.respondDeduction({
+        roomId: currentRoom.id,
+        proposalId,
+        accepted,
+        responderUserId: currentPlayer.id,
+      });
+    } catch {
+      await api.respondDeduction(currentRoom.id, {
+        proposalId,
+        accepted,
+        responderUserId: currentPlayer.id,
+      });
+    }
+    setActiveProposal(null);
+  };
+
   // Execute Host Action Handler
   const handleExecuteHostAction = async (payload: {
-    action: 'reset_scores' | 'kick_player' | 'change_mode' | 'set_initial_score' | 'close_room';
+    action: 'reset_scores' | 'kick_player' | 'change_mode' | 'set_initial_score' | 'set_retention' | 'close_room';
     targetUserId?: string;
     mode?: GameMode;
     initialScore?: number;
+    retention?: RoomRetention;
   }) => {
     if (!currentRoom || !currentPlayer) return;
 
@@ -223,6 +455,7 @@ export default function App() {
         targetUserId: payload.targetUserId,
         mode: payload.mode,
         initialScore: payload.initialScore,
+        retention: payload.retention,
       });
     } catch {
       const res = await api.executeHostAction(currentRoom.id, {
@@ -240,6 +473,7 @@ export default function App() {
     removeStoredToken();
     setCurrentRoom(null);
     setCurrentPlayer(null);
+    setActiveProposal(null);
     // Clear URL parameter
     window.history.replaceState({}, document.title, window.location.pathname);
   };
@@ -264,11 +498,24 @@ export default function App() {
 
   if (!currentRoom || !currentPlayer) {
     return (
-      <JoinCreateModal
-        onJoin={handleJoinRoom}
-        onCreate={handleCreateRoom}
-        initialRoomCode={urlRoomCode}
-      />
+      <>
+        <JoinCreateModal
+          onJoin={handleJoinRoom}
+          onCreate={handleCreateRoom}
+          initialRoomCode={urlRoomCode}
+          onOpenServerAdmin={hasAdminAccess ? () => setShowServerAdmin(true) : undefined}
+        />
+        {hasAdminAccess && (
+          <ServerAdminModal
+            isOpen={showServerAdmin}
+            onClose={() => setShowServerAdmin(false)}
+            onSelectRoom={(code) => {
+              setUrlRoomCode(code);
+              setShowServerAdmin(false);
+            }}
+          />
+        )}
+      </>
     );
   }
 
@@ -280,6 +527,9 @@ export default function App() {
         currentPlayer={currentPlayer}
         onLeaveRoom={handleLeaveRoom}
         onShowQR={() => setShowQR(true)}
+        onOpenServerAdmin={hasAdminAccess ? () => setShowServerAdmin(true) : undefined}
+        onOpenAvatarPicker={() => setIsAvatarPickerOpen(true)}
+        onOpenShareModal={handleOpenShareModal}
       />
 
       {/* Connection Offline Banner */}
@@ -290,10 +540,17 @@ export default function App() {
         </div>
       )}
 
-      {/* Live Floating Notification */}
+      {/* Live Floating Notifications */}
       <LiveNotification
         latestLog={latestLog}
         systemMessage={systemMessage}
+        customNotification={customNotification}
+      />
+
+      {/* Deduction Consent Modal */}
+      <DeductionConfirmModal
+        proposal={activeProposal}
+        onRespond={handleRespondDeduction}
       />
 
       {/* 2. Main Content Area (Max width phone layout) */}
@@ -312,6 +569,8 @@ export default function App() {
             room={currentRoom}
             currentPlayer={currentPlayer}
             onSelectPlayerToScore={handleSelectPlayerToScore}
+            onOpenAvatarPicker={() => setIsAvatarPickerOpen(true)}
+            onOpenShareModal={handleOpenShareModal}
           />
         )}
 
@@ -319,6 +578,7 @@ export default function App() {
           <LogTab
             room={currentRoom}
             currentPlayer={currentPlayer}
+            onOpenShareModal={handleOpenShareModal}
           />
         )}
 
@@ -328,6 +588,8 @@ export default function App() {
             currentPlayer={currentPlayer}
             onExecuteHostAction={handleExecuteHostAction}
             onShowQR={() => setShowQR(true)}
+            onOpenAvatarPicker={() => setIsAvatarPickerOpen(true)}
+            onOpenShareModal={handleOpenShareModal}
           />
         )}
       </main>
@@ -398,6 +660,35 @@ export default function App() {
         isOpen={showQR}
         onClose={() => setShowQR(false)}
       />
+
+      {/* Avatar Picker Modal (In-game) */}
+      <AvatarPickerModal
+        isOpen={isAvatarPickerOpen}
+        currentAvatar={currentPlayer?.avatar}
+        onClose={() => setIsAvatarPickerOpen(false)}
+        onSelectAvatar={handleUpdateAvatar}
+      />
+
+      {/* Share Image Modal (Battle Report & Logs) */}
+      <ShareImageModal
+        isOpen={shareModalConfig.isOpen}
+        onClose={() => setShareModalConfig((prev) => ({ ...prev, isOpen: false }))}
+        room={currentRoom}
+        currentPlayer={currentPlayer}
+        defaultType={shareModalConfig.defaultType}
+      />
+
+      {/* Server Admin Modal (Internal IP only) */}
+      {hasAdminAccess && (
+        <ServerAdminModal
+          isOpen={showServerAdmin}
+          onClose={() => setShowServerAdmin(false)}
+          onSelectRoom={(code) => {
+            setUrlRoomCode(code);
+            setShowServerAdmin(false);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Room, Player, GameMode } from '../types';
+import { Room, Player, GameMode, RoomRetention } from '../types';
 import { sounds } from '../utils/audio';
+import { copyToClipboard } from '../utils/clipboard';
 import { 
   Settings, 
   Crown, 
@@ -16,26 +17,32 @@ import {
   Code2, 
   ShieldCheck, 
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  Clock
 } from 'lucide-react';
+
 
 interface RoomManageTabProps {
   room: Room;
   currentPlayer: Player | null;
   onExecuteHostAction: (payload: {
-    action: 'reset_scores' | 'kick_player' | 'change_mode' | 'set_initial_score' | 'close_room';
+    action: 'reset_scores' | 'kick_player' | 'change_mode' | 'set_initial_score' | 'set_retention' | 'close_room';
     targetUserId?: string;
     mode?: GameMode;
     initialScore?: number;
+    retention?: RoomRetention;
   }) => Promise<void>;
   onShowQR: () => void;
+  onOpenShareModal?: (defaultType?: 'leaderboard' | 'logs') => void;
 }
+
 
 export const RoomManageTab: React.FC<RoomManageTabProps> = ({
   room,
   currentPlayer,
   onExecuteHostAction,
   onShowQR,
+  onOpenShareModal,
 }) => {
   const isHost = currentPlayer?.isHost;
   const [copiedLink, setCopiedLink] = useState(false);
@@ -51,13 +58,12 @@ export const RoomManageTab: React.FC<RoomManageTabProps> = ({
     sounds.playTap();
     const url = `${window.location.origin}${window.location.pathname}?room=${room.code}`;
     const text = `🎮 邀请你加入实时游戏记分房间【${room.title}】\n🔑 房间码：${room.code}\n🔗 链接：${url}`;
-    try {
-      await navigator.clipboard.writeText(text);
+    const success = await copyToClipboard(text);
+    if (success) {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);
-    } catch {
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2000);
+    } else {
+      window.prompt('请长按或Ctrl+C复制邀请信息：', text);
     }
   };
 
@@ -160,13 +166,12 @@ wx.request({
 
   const copyMiniProgramSnippet = async () => {
     sounds.playTap();
-    try {
-      await navigator.clipboard.writeText(miniProgramCodeExample);
+    const success = await copyToClipboard(miniProgramCodeExample);
+    if (success) {
       setCopiedMiniCode(true);
       setTimeout(() => setCopiedMiniCode(false), 2000);
-    } catch {
-      setCopiedMiniCode(true);
-      setTimeout(() => setCopiedMiniCode(false), 2000);
+    } else {
+      window.prompt('请长按或Ctrl+C复制代码：', miniProgramCodeExample);
     }
   };
 
@@ -273,7 +278,53 @@ wx.request({
             </div>
           </div>
 
+          {/* Room Retention Lifecycle */}
+          <div className="pt-3 border-t-2 border-black">
+            <div className="text-xs text-black font-black mb-1.5 flex items-center gap-1">
+              <Clock className="w-4 h-4 stroke-[2.5]" />
+              <span>房间保留策略与生命周期</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+              {[
+                { key: 'offline_30s', label: '离线30s解散', desc: '全员离线30秒后解散' },
+                { key: '1h', label: '保持 1 小时', desc: '1小时后自动过期' },
+                { key: '24h', label: '保持 24 小时', desc: '整天有效' },
+                { key: 'permanent', label: '永久保留', desc: '不自动解散' },
+              ].map((item) => {
+                const isCurrent = (room.retention || 'offline_30s') === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={async () => {
+                      try {
+                        setActionLoading(true);
+                        await onExecuteHostAction({
+                          action: 'set_retention',
+                          retention: item.key as RoomRetention,
+                        });
+                        sounds.playTap();
+                      } finally {
+                        setActionLoading(false);
+                      }
+                    }}
+                    className={`p-2 rounded-xl border-2 border-black text-left text-xs transition-all shadow-brutal-sm ${
+                      isCurrent
+                        ? 'bg-black text-white font-black'
+                        : 'bg-white text-black hover:bg-black/5 font-bold'
+                    }`}
+                  >
+                    <div className="font-black text-xs">{item.label}</div>
+                    <div className="text-[10px] opacity-75 mt-0.5">{item.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Reset All Scores */}
+
           <div className="pt-3 border-t-2 border-black">
             <div className="text-xs text-black font-black mb-1.5 flex items-center gap-1">
               <RotateCcw className="w-4 h-4 stroke-[2.5]" />
