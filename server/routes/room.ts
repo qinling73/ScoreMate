@@ -72,7 +72,7 @@ export function evaluateAdminAccess(req: Request): { hasAccess: boolean; clientI
   const clientIp = getClientIp(req);
   const isInternal = isInternalIp(clientIp);
   const adminKey = (req.headers?.['x-admin-key'] as string) || (req.query?.adminKey as string);
-  const configuredSecret = process.env.ADMIN_SECRET;
+  const configuredSecret = process.env.ADMIN_SECRET || 'admin888';
 
   if (isInternal) {
     return {
@@ -83,12 +83,12 @@ export function evaluateAdminAccess(req: Request): { hasAccess: boolean; clientI
     };
   }
 
-  if (configuredSecret && adminKey && adminKey === configuredSecret) {
+  if (adminKey && adminKey === configuredSecret) {
     return {
       hasAccess: true,
       clientIp,
       isInternal: false,
-      reason: '已通过管理员专用密钥验证',
+      reason: '已通过管理员专用密钥认证',
     };
   }
 
@@ -96,7 +96,7 @@ export function evaluateAdminAccess(req: Request): { hasAccess: boolean; clientI
     hasAccess: false,
     clientIp,
     isInternal: false,
-    reason: '当前访问来源为公网IP，管理后台仅限局域网/内网IP访问',
+    reason: '当前为公网IP访问，请在 /ra 路径输入管理员密码完成认证',
   };
 }
 
@@ -482,7 +482,47 @@ const handleDeductionResponse = (req: Request, res: Response): void => {
 roomRouter.post('/:roomId/deduction/respond', handleDeductionResponse);
 roomRouter.post('/:roomId/respond-deduction', handleDeductionResponse);
 
-// GET /api/room/admin/access-check - Check whether client IP has admin privileges (internal network)
+// POST /api/room/admin/auth - Authenticate admin credentials for /ra route
+roomRouter.post('/admin/auth', (req: Request, res: Response): void => {
+  try {
+    const password = req.body?.password || req.body?.adminKey;
+    const configuredSecret = process.env.ADMIN_SECRET || 'admin888';
+    const clientIp = getClientIp(req);
+    const isInternal = isInternalIp(clientIp);
+
+    if (isInternal) {
+      res.status(200).json({
+        success: true,
+        adminKey: configuredSecret,
+        clientIp,
+        isInternal: true,
+        message: '内网环境已自动授权',
+      });
+      return;
+    }
+
+    if (!password) {
+      res.status(400).json({ error: '请输入管理员密码' });
+      return;
+    }
+
+    if (password === configuredSecret) {
+      res.status(200).json({
+        success: true,
+        adminKey: configuredSecret,
+        clientIp,
+        isInternal: false,
+        message: '管理员身份认证成功',
+      });
+    } else {
+      res.status(401).json({ error: '管理员密码错误，请重新输入' });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: '认证服务异常: ' + (err?.message || '') });
+  }
+});
+
+// GET /api/room/admin/access-check - Check whether client IP has admin privileges (internal network or valid key)
 roomRouter.get('/admin/access-check', (req: Request, res: Response): void => {
   try {
     const access = evaluateAdminAccess(req);

@@ -1,6 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import { Room, Player, ScoreLog, ScoreUpdateBroadcast, RoomActionBroadcast, DeductionProposal, RoomRetention } from '../types';
-import { getStoredToken } from './api';
+import { getStoredToken, getApiBaseUrl } from './api';
 
 type EventCallback<T = any> = (data: T) => void;
 
@@ -23,7 +23,10 @@ class SocketService {
       this.socket.disconnect();
     }
 
-    this.socket = io(window.location.origin, {
+    const baseUrl = getApiBaseUrl();
+    const targetOrigin = baseUrl || (typeof window !== 'undefined' ? window.location.origin : '');
+
+    this.socket = io(targetOrigin, {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 20,

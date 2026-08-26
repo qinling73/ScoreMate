@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { GameMode, RoomRetention } from '../types';
-import { getStoredNickname, setStoredNickname } from '../services/api';
+import { getStoredNickname, setStoredNickname, getApiBaseUrl, setApiBaseUrl } from '../services/api';
 import { getStoredAvatar, setStoredAvatar, DEFAULT_AVATAR } from '../utils/avatar';
 import { AvatarDisplay } from './AvatarDisplay';
 import { AvatarPickerModal } from './AvatarPickerModal';
@@ -18,7 +18,9 @@ import {
   Server,
   Clock,
   Smile,
-  Edit3
+  Edit3,
+  Link,
+  Check
 } from 'lucide-react';
 
 interface JoinCreateModalProps {
@@ -40,6 +42,9 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
   const [nickname, setNickname] = useState<string>(getStoredNickname() || '');
   const [avatar, setAvatar] = useState<string>(getStoredAvatar() || DEFAULT_AVATAR);
   const [isAvatarPickerOpen, setIsAvatarPickerOpen] = useState<boolean>(false);
+  const [showBackendConfig, setShowBackendConfig] = useState<boolean>(false);
+  const [backendUrlInput, setBackendUrlInput] = useState<string>(getApiBaseUrl() || '');
+  const [backendSavedSuccess, setBackendSavedSuccess] = useState<boolean>(false);
   
   // Join Tab State
   const [roomCode, setRoomCode] = useState<string>(initialRoomCode);
@@ -58,6 +63,17 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
       setActiveTab('join');
     }
   }, [initialRoomCode]);
+
+  const handleSaveBackendUrl = (e: React.FormEvent) => {
+    e.preventDefault();
+    setApiBaseUrl(backendUrlInput.trim());
+    setBackendSavedSuccess(true);
+    setErrorMessage('');
+    setTimeout(() => {
+      setBackendSavedSuccess(false);
+      setShowBackendConfig(false);
+    }, 1200);
+  };
 
   const handleTabChange = (tab: 'join' | 'create') => {
     sounds.playTap();
@@ -236,9 +252,55 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
 
           {/* Error Message */}
           {errorMessage && (
-            <div className="p-3 rounded-xl bg-[#FF6B6B] border-2 border-black text-white text-xs font-black shadow-brutal-sm">
-              {errorMessage}
+            <div className="p-3 rounded-xl bg-[#FF6B6B] border-2 border-black text-white text-xs font-black shadow-brutal-sm space-y-2">
+              <div>{errorMessage}</div>
+              <button
+                type="button"
+                onClick={() => setShowBackendConfig(true)}
+                className="px-2.5 py-1 rounded-lg bg-black text-[#FFE66D] border border-black text-[11px] font-black inline-flex items-center gap-1 hover:bg-neutral-800 active:scale-95"
+              >
+                <Link className="w-3 h-3" />
+                <span>配置后端服务器地址</span>
+              </button>
             </div>
+          )}
+
+          {/* Backend URL Custom Config Box */}
+          {showBackendConfig && (
+            <form onSubmit={handleSaveBackendUrl} className="p-3.5 bg-[#FFF9D2] border-2 border-black rounded-2xl space-y-2 animate-fade-in text-black">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black flex items-center gap-1.5 text-black">
+                  <Link className="w-4 h-4 text-black stroke-[2.5]" />
+                  <span>后端服务地址 (API Server)</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowBackendConfig(false)}
+                  className="text-[11px] text-neutral-600 font-bold hover:text-black underline"
+                >
+                  关闭
+                </button>
+              </div>
+              <p className="text-[11px] text-neutral-700 font-bold leading-tight">
+                如果您将前端部署在 Cloudflare Pages，请在此输入 Render 提供的后端完整公网网址（例如 <code>https://xxx.onrender.com</code>）：
+              </p>
+              <div className="flex gap-1.5">
+                <input
+                  type="url"
+                  placeholder="https://your-app.onrender.com"
+                  value={backendUrlInput}
+                  onChange={(e) => setBackendUrlInput(e.target.value)}
+                  className="flex-1 px-3 py-2 text-xs font-bold bg-white border-2 border-black rounded-xl focus:outline-hidden"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-2 bg-black text-white rounded-xl text-xs font-black border-2 border-black shadow-brutal-sm hover:bg-neutral-800 active:scale-95 flex items-center gap-1 shrink-0"
+                >
+                  {backendSavedSuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : null}
+                  <span>{backendSavedSuccess ? '已保存!' : '保存'}</span>
+                </button>
+              </div>
+            </form>
           )}
 
           {/* JOIN FORM */}
@@ -472,6 +534,18 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
           <div className="p-2.5 rounded-xl bg-white border-2 border-black shadow-brutal-sm">
             📱 手机全屏适配
           </div>
+        </div>
+
+        {/* Backend configuration switcher toggle */}
+        <div className="text-center pt-1">
+          <button
+            type="button"
+            onClick={() => setShowBackendConfig(!showBackendConfig)}
+            className="text-[11px] text-neutral-500 font-bold hover:text-black inline-flex items-center gap-1 transition-colors"
+          >
+            <Link className="w-3 h-3" />
+            <span>{getApiBaseUrl() ? `当前后端: ${getApiBaseUrl()}` : '配置独立后端服务地址 (VITE_API_URL)'}</span>
+          </button>
         </div>
       </div>
     </div>

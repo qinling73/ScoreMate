@@ -48,7 +48,7 @@ export default function App() {
     defaultType: 'leaderboard',
   });
 
-  // Check admin privileges on initial load (only internal IP addresses are granted access)
+  // Check admin privileges on initial load
   useEffect(() => {
     api.checkAdminAccess()
       .then((res) => {
@@ -57,6 +57,15 @@ export default function App() {
       .catch(() => {
         setHasAdminAccess(false);
       });
+  }, []);
+
+  // Check URL pathname for /ra (Route to Admin) or ?admin=1
+  useEffect(() => {
+    const pathname = window.location.pathname.toLowerCase();
+    const params = new URLSearchParams(window.location.search);
+    if (pathname === '/ra' || pathname === '/ra/' || params.get('admin') === '1' || params.get('ra') === '1') {
+      setShowServerAdmin(true);
+    }
   }, []);
 
   // Pending deduction proposal for current user
@@ -678,14 +687,22 @@ export default function App() {
         defaultType={shareModalConfig.defaultType}
       />
 
-      {/* Server Admin Modal (Internal IP only) */}
-      {hasAdminAccess && (
+      {/* Server Admin Modal (Accessible via internal IP or /ra password auth) */}
+      {(hasAdminAccess || showServerAdmin) && (
         <ServerAdminModal
           isOpen={showServerAdmin}
-          onClose={() => setShowServerAdmin(false)}
+          onClose={() => {
+            setShowServerAdmin(false);
+            if (window.location.pathname.toLowerCase().startsWith('/ra')) {
+              window.history.replaceState({}, document.title, '/');
+            }
+          }}
           onSelectRoom={(code) => {
             setUrlRoomCode(code);
             setShowServerAdmin(false);
+            if (window.location.pathname.toLowerCase().startsWith('/ra')) {
+              window.history.replaceState({}, document.title, '/');
+            }
           }}
         />
       )}

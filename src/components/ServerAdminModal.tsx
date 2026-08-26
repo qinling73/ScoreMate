@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ServerRoomSummary, RoomRetention } from '../types';
-import { api } from '../services/api';
+import { api, removeStoredAdminKey } from '../services/api';
 import { 
   Server, 
   Trash2, 
@@ -13,7 +13,10 @@ import {
   Radio, 
   AlertTriangle, 
   Sparkles,
-  Layers
+  Layers,
+  KeyRound,
+  Lock,
+  LogOut
 } from 'lucide-react';
 
 interface ServerAdminModalProps {
@@ -33,40 +36,87 @@ export const ServerAdminModal: React.FC<ServerAdminModalProps> = ({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [filterText, setFilterText] = useState('');
   const [retentionUpdatingId, setRetentionUpdatingId] = useState<string | null>(null);
-  const [clientIpInfo, setClientIpInfo] = useState<{ clientIp?: string; isInternal?: boolean; reason?: string } | null>(null);
+  const [clientIpInfo, setClientIpInfo] = useState<{ clientIp?: string; isInternal?: boolean; reason?: string; hasAdminAccess?: boolean } | null>(null);
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [authPassword, setAuthPassword] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
 
   const fetchRooms = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      // Fetch access check & rooms list
-      const [accessRes, roomRes] = await Promise.all([
-        api.checkAdminAccess(),
-        api.getAllRooms(),
-      ]);
-
+      // Check access permission first
+      const accessRes = await api.checkAdminAccess();
       setClientIpInfo({
         clientIp: accessRes.clientIp,
         isInternal: accessRes.isInternal,
         reason: accessRes.reason,
+        hasAdminAccess: accessRes.hasAdminAccess,
       });
 
+      if (!accessRes.hasAdminAccess) {
+        setNeedsAuth(true);
+        setRooms([]);
+        return;
+      }
+
+      setNeedsAuth(false);
+      const roomRes = await api.getAllRooms();
       setRooms(roomRes.rooms || []);
     } catch (err: any) {
-      setError(err.message || '获取房间列表失败');
+      if (err.message && (err.message.includes('403') || err.message.includes('认证') || err.message.includes('权限'))) {
+        setNeedsAuth(true);
+      } else {
+        setError(err.message || '获取房间列表失败');
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!authPassword.trim()) {
+      setError('请输入管理员访问密码');
+      return;
+    }
+
+    try {
+      setAuthSubmitting(true);
+      setError(null);
+      await api.adminAuth(authPassword.trim());
+      setSuccessMsg('管理员身份认证成功！');
+      setAuthPassword('');
+      setNeedsAuth(false);
+      setTimeout(() => setSuccessMsg(null), 2500);
+      await fetchRooms();
+    } catch (err: any) {
+      setError(err.message || '认证失败，密码错误');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleLogoutAdmin = () => {
+    removeStoredAdminKey();
+    setNeedsAuth(true);
+    setRooms([]);
+    setSuccessMsg('已退出管理员认证');
+    setTimeout(() => setSuccessMsg(null), 2000);
+  };
+
   useEffect(() => {
     if (isOpen) {
       fetchRooms();
-      const interval = setInterval(fetchRooms, 10000); // refresh every 10s
+      const interval = setInterval(() => {
+        if (!needsAuth) {
+          fetchRooms();
+        }
+      }, 10000); // refresh every 10s
       return () => clearInterval(interval);
     }
-  }, [isOpen]);
+  }, [isOpen, needsAuth]);
 
   const handleDeleteRoom = async (roomId: string, roomCode: string, isClosed: boolean) => {
     const confirmText = isClosed
@@ -184,7 +234,7 @@ export const ServerAdminModal: React.FC<ServerAdminModalProps> = ({
           </div>
         </div>
 
-        {/* Room List Content */}
+        {/* Room List Content or Auth Required */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
           {successMsg && (
             <div className="p-3 rounded-2xl bg-emerald-100 border-2 border-emerald-500 text-emerald-900 text-xs font-bold flex items-center gap-2 animate-fade-in">
@@ -194,135 +244,186 @@ export const ServerAdminModal: React.FC<ServerAdminModalProps> = ({
           )}
 
           {error && (
-            <div className="p-3 rounded-2xl bg-red-100 border-2 border-red-500 text-red-800 text-xs font-bold flex items-center gap-2">
+            <div className="p-3 rounded-2xl bg-red-100 border-2 border-red-500 text-red-800 text-xs font-bold flex items-center gap-2 animate-fade-in">
               <AlertTriangle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
           )}
 
-          {filteredRooms.length === 0 && !loading && (
-            <div className="text-center py-12 text-neutral-400 font-bold text-sm">
-              暂无匹配的房间记录
-            </div>
-          )}
-
-          {filteredRooms.map((room) => {
-            const isDissolving = Boolean(room.dissolveCountdownExpiresAt && room.status === 'active');
-            const isClosed = room.status === 'closed';
-
-            return (
-              <div
-                key={room.id}
-                id={`admin-room-card-${room.code}`}
-                className={`p-3.5 sm:p-4 rounded-2xl border-2 border-black transition-all ${
-                  isClosed
-                    ? 'bg-neutral-100 opacity-75'
-                    : isDissolving
-                    ? 'bg-red-50 border-red-500'
-                    : 'bg-white shadow-brutal-sm'
-                }`}
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  {/* Left: Info */}
-                  <div className="space-y-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-2.5 py-0.5 rounded-lg bg-black text-[#FFE66D] font-mono text-sm font-black tracking-wider">
-                        {room.code}
-                      </span>
-                      <span className="font-black text-sm text-neutral-900 truncate">
-                        {room.title}
-                      </span>
-                      <span className={`text-[11px] font-black px-2 py-0.5 rounded-md border border-black ${
-                        room.mode === 'zero_sum' ? 'bg-[#FF6B6B] text-white' : 'bg-[#4ECDC4] text-black'
-                      }`}>
-                        {room.mode === 'zero_sum' ? '零和模式' : '自由模式'}
-                      </span>
-                      <span className={`text-[11px] font-black px-2 py-0.5 rounded-md ${
-                        isClosed ? 'bg-neutral-300 text-neutral-700' : 'bg-emerald-100 text-emerald-800'
-                      }`}>
-                        {isClosed ? '已解散' : '运行中'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-3 text-xs text-neutral-600 font-bold flex-wrap pt-0.5">
-                      <span>房主: <strong className="text-neutral-800">{room.hostNickname}</strong></span>
-                      <span className="flex items-center gap-1">
-                        <Users className="w-3.5 h-3.5" />
-                        <span>成员: {room.memberCount} 人</span>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Radio className={`w-3.5 h-3.5 ${room.onlineCount > 0 ? 'text-emerald-500' : 'text-neutral-400'}`} />
-                        <span>在线: {room.onlineCount} 人</span>
-                      </span>
-                      <span>创建: {new Date(room.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-
-                    {/* Dissolution Alert */}
-                    {isDissolving && (
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-red-500 text-white text-xs font-black animate-pulse">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        <span>全员离线中：30秒后将自动解散房间</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Right: Actions & Retention Settings */}
-                  <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-black/10">
-                    {/* Retention selector */}
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-neutral-500" />
-                      <select
-                        disabled={isClosed || retentionUpdatingId === room.id}
-                        value={room.retention || 'offline_30s'}
-                        onChange={(e) => handleUpdateRetention(room.id, e.target.value as RoomRetention)}
-                        className="text-xs font-black bg-neutral-100 border-2 border-black rounded-xl px-2 py-1.5 focus:outline-hidden disabled:opacity-50"
-                      >
-                        <option value="offline_30s">离线30s解散</option>
-                        <option value="1h">保留 1 小时</option>
-                        <option value="24h">保留 24 小时</option>
-                        <option value="permanent">永久保留</option>
-                      </select>
-                    </div>
-
-                    {onSelectRoom && !isClosed && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onSelectRoom(room.code);
-                          onClose();
-                        }}
-                        className="px-3 py-1.5 rounded-xl border-2 border-black bg-[#4ECDC4] hover:bg-[#3dbdb4] active:scale-95 text-xs font-black text-black transition-all shadow-brutal-sm"
-                      >
-                        进入
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteRoom(room.id, room.code, isClosed)}
-                      className="px-2.5 py-1.5 rounded-xl border-2 border-black bg-red-100 hover:bg-red-200 active:scale-95 text-xs font-black text-red-700 transition-all flex items-center gap-1 shadow-brutal-sm"
-                      title={isClosed ? '清除记录' : '强制解散房间并踢出玩家'}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>{isClosed ? '清理' : '强制解散'}</span>
-                    </button>
-                  </div>
-                </div>
+          {needsAuth ? (
+            <div className="py-8 px-4 flex flex-col items-center justify-center text-center max-w-sm mx-auto animate-fade-in">
+              <div className="w-16 h-16 rounded-3xl bg-[#FF6B6B]/10 border-2 border-black text-[#FF6B6B] flex items-center justify-center mb-4 shadow-brutal-sm">
+                <Lock className="w-8 h-8 stroke-[2.5]" />
               </div>
-            );
-          })}
+              <h3 className="text-lg font-black text-black tracking-tight mb-1">管理员身份认证</h3>
+              <p className="text-xs text-neutral-600 font-bold mb-6">
+                {clientIpInfo?.isInternal
+                  ? '系统检测到内网环境，您可输入管理员密钥或直接连接。'
+                  : '当前处于公网访问环境（IP: ' + (clientIpInfo?.clientIp || '未知') + '），请输入管理员访问密码以解锁后台管理权限。'}
+              </p>
+
+              <form onSubmit={handleAuthSubmit} className="w-full space-y-3">
+                <div className="relative">
+                  <KeyRound className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="请输入管理员密码 (默认 admin888)"
+                    autoFocus
+                    className="w-full pl-10 pr-3 py-3 text-sm font-bold bg-white border-2 border-black rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-black shadow-brutal-sm"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={authSubmitting || !authPassword.trim()}
+                  className="w-full py-3 rounded-2xl bg-[#FFE66D] border-2 border-black text-black font-black text-sm hover:bg-[#ffd93d] active:scale-98 transition-all shadow-brutal disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {authSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                  <span>{authSubmitting ? '正在验证...' : '验证并解锁管理后台'}</span>
+                </button>
+              </form>
+            </div>
+          ) : (
+            <>
+              {filteredRooms.length === 0 && !loading && (
+                <div className="text-center py-12 text-neutral-400 font-bold text-sm">
+                  暂无匹配的房间记录
+                </div>
+              )}
+
+              {filteredRooms.map((room) => {
+                const isDissolving = Boolean(room.dissolveCountdownExpiresAt && room.status === 'active');
+                const isClosed = room.status === 'closed';
+
+                return (
+                  <div
+                    key={room.id}
+                    id={`admin-room-card-${room.code}`}
+                    className={`p-3.5 sm:p-4 rounded-2xl border-2 border-black transition-all ${
+                      isClosed
+                        ? 'bg-neutral-100 opacity-75'
+                        : isDissolving
+                        ? 'bg-red-50 border-red-500'
+                        : 'bg-white shadow-brutal-sm'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      {/* Left: Info */}
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2.5 py-0.5 rounded-lg bg-black text-[#FFE66D] font-mono text-sm font-black tracking-wider">
+                            {room.code}
+                          </span>
+                          <span className="font-black text-sm text-neutral-900 truncate">
+                            {room.title}
+                          </span>
+                          <span className={`text-[11px] font-black px-2 py-0.5 rounded-md border border-black ${
+                            room.mode === 'zero_sum' ? 'bg-[#FF6B6B] text-white' : 'bg-[#4ECDC4] text-black'
+                          }`}>
+                            {room.mode === 'zero_sum' ? '零和模式' : '自由模式'}
+                          </span>
+                          <span className={`text-[11px] font-black px-2 py-0.5 rounded-md ${
+                            isClosed ? 'bg-neutral-300 text-neutral-700' : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {isClosed ? '已解散' : '运行中'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-3 text-xs text-neutral-600 font-bold flex-wrap pt-0.5">
+                          <span>房主: <strong className="text-neutral-800">{room.hostNickname}</strong></span>
+                          <span className="flex items-center gap-1">
+                            <Users className="w-3.5 h-3.5" />
+                            <span>成员: {room.memberCount} 人</span>
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Radio className={`w-3.5 h-3.5 ${room.onlineCount > 0 ? 'text-emerald-500' : 'text-neutral-400'}`} />
+                            <span>在线: {room.onlineCount} 人</span>
+                          </span>
+                          <span>创建: {new Date(room.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+
+                        {/* Dissolution Alert */}
+                        {isDissolving && (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-red-500 text-white text-xs font-black animate-pulse">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            <span>全员离线中：30秒后将自动解散房间</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right: Actions & Retention Settings */}
+                      <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-black/10">
+                        {/* Retention selector */}
+                        <div className="flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-neutral-500" />
+                          <select
+                            disabled={isClosed || retentionUpdatingId === room.id}
+                            value={room.retention || 'offline_30s'}
+                            onChange={(e) => handleUpdateRetention(room.id, e.target.value as RoomRetention)}
+                            className="text-xs font-black bg-neutral-100 border-2 border-black rounded-xl px-2 py-1.5 focus:outline-hidden disabled:opacity-50"
+                          >
+                            <option value="offline_30s">离线30s解散</option>
+                            <option value="1h">保留 1 小时</option>
+                            <option value="24h">保留 24 小时</option>
+                            <option value="permanent">永久保留</option>
+                          </select>
+                        </div>
+
+                        {onSelectRoom && !isClosed && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onSelectRoom(room.code);
+                              onClose();
+                            }}
+                            className="px-3 py-1.5 rounded-xl border-2 border-black bg-[#4ECDC4] hover:bg-[#3dbdb4] active:scale-95 text-xs font-black text-black transition-all shadow-brutal-sm"
+                          >
+                            进入
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRoom(room.id, room.code, isClosed)}
+                          className="px-2.5 py-1.5 rounded-xl border-2 border-black bg-red-100 hover:bg-red-200 active:scale-95 text-xs font-black text-red-700 transition-all flex items-center gap-1 shadow-brutal-sm"
+                          title={isClosed ? '清除记录' : '强制解散房间并踢出玩家'}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>{isClosed ? '清理' : '强制解散'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
         </div>
 
         {/* Footer info */}
         <div className="p-3 sm:p-4 bg-neutral-100 border-t-2 border-black text-xs font-bold text-neutral-600 flex items-center justify-between flex-wrap gap-2">
           <span>💡 提示：管理员点击「强制解散」将实时将房间内所有玩家请出，并彻底清理房间记录。</span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-1.5 rounded-xl bg-black text-white font-black text-xs hover:bg-neutral-800 shadow-brutal-sm active:scale-95"
-          >
-            完成
-          </button>
+          <div className="flex items-center gap-2">
+            {!needsAuth && (
+              <button
+                type="button"
+                onClick={handleLogoutAdmin}
+                className="px-3 py-1.5 rounded-xl bg-neutral-200 border-2 border-black text-black font-black text-xs hover:bg-neutral-300 shadow-brutal-sm active:scale-95 flex items-center gap-1"
+                title="退出当前管理员授权"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>退出登录</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-1.5 rounded-xl bg-black text-white font-black text-xs hover:bg-neutral-800 shadow-brutal-sm active:scale-95"
+            >
+              关闭
+            </button>
+          </div>
         </div>
       </div>
     </div>

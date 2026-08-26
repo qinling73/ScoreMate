@@ -1,6 +1,7 @@
 import { db, sanitizeAvatarInput } from '../server/db.js';
 import { evaluateAdminAccess } from '../server/routes/room.js';
 import { Request } from 'express';
+import { Room, ScoreLog, DeductionProposal, Player } from '../src/types';
 
 async function runTests() {
   console.log('====================================================');
@@ -125,14 +126,14 @@ async function runTests() {
     nickname: '玩家小李',
     avatar: '🐱',
     roomCode: room.code,
-  });
+  }) as { room: Room; token: string; player: Player };
   const p2 = join2.player;
 
   const join3 = db.joinRoom({
     nickname: '玩家小王',
     avatar: '🐶',
     roomCode: room.code,
-  });
+  }) as { room: Room; token: string; player: Player };
   const p3 = join3.player;
 
   const roomAfterJoin = db.getRoom(room.id)!;
@@ -153,7 +154,7 @@ async function runTests() {
   assert(scoreResult.room.members[p3.id].score === 1050, 'Player 3 score increased to 1050 (+50)');
 
   // Verify Zero-Sum Conservation Law
-  const totalScore = Object.values(scoreResult.room.members).reduce((acc, m) => acc + m.score, 0);
+  const totalScore = Object.values(scoreResult.room.members).reduce((acc, m) => acc + (m as Player).score, 0);
   assert(totalScore === 3000, 'Total score is strictly conserved in Zero-Sum mode (900 + 1050 + 1050 = 3000)');
 
   // 3.4 Logs recording
