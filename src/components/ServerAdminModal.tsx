@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ServerRoomSummary, RoomRetention } from '../types';
-import { api, removeStoredAdminKey } from '../services/api';
+import { api, removeStoredAdminKey, getApiBaseUrl, setApiBaseUrl } from '../services/api';
 import { 
   Server, 
   Trash2, 
@@ -16,7 +16,9 @@ import {
   Layers,
   KeyRound,
   Lock,
-  LogOut
+  LogOut,
+  Link as LinkIcon,
+  Check
 } from 'lucide-react';
 
 interface ServerAdminModalProps {
@@ -277,12 +279,19 @@ export const ServerAdminModal: React.FC<ServerAdminModalProps> = ({
                 <button
                   type="submit"
                   disabled={authSubmitting || !authPassword.trim()}
-                  className="w-full py-3 rounded-2xl bg-[#FFE66D] border-2 border-black text-black font-black text-sm hover:bg-[#ffd93d] active:scale-98 transition-all shadow-brutal disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="w-full py-3 rounded-2xl bg-[#FFE66D] border-2 border-black text-black font-black text-sm hover:bg-[#ffd93d] active:scale-98 transition-all shadow-brutal disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                 >
                   {authSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
                   <span>{authSubmitting ? '正在验证...' : '验证并解锁管理后台'}</span>
                 </button>
               </form>
+
+              {/* Target Backend Info for cross-origin hosting */}
+              <div className="w-full mt-4 pt-3 border-t border-black/10 text-center">
+                <p className="text-[11px] text-neutral-500 font-bold">
+                  目标后端: <code className="text-black bg-neutral-100 px-1.5 py-0.5 rounded-md border border-black/20 font-mono text-[10px]">{getApiBaseUrl() || window.location.origin}</code>
+                </p>
+              </div>
             </div>
           ) : (
             <>

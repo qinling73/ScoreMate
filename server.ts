@@ -12,7 +12,12 @@ async function startServer() {
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   // Global Middlewares
-  app.use(cors());
+  app.use(cors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-key'],
+  }));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
@@ -41,21 +46,8 @@ async function startServer() {
   // Initialize Socket.io
   setupSocketIO(server);
 
-  // Locate static files (robust for dist directory or project root)
-  let distPath = path.join(process.cwd(), 'dist');
-  if (!fs.existsSync(path.join(distPath, 'index.html'))) {
-    distPath = __dirname;
-  }
-  if (!fs.existsSync(path.join(distPath, 'index.html'))) {
-    distPath = path.resolve(__dirname, '..', 'dist');
-  }
-
-  const hasStaticFiles = fs.existsSync(path.join(distPath, 'index.html'));
-  const isCjsBundle = typeof __filename !== 'undefined' && __filename.endsWith('server.cjs');
-  const isProduction = process.env.NODE_ENV === 'production' || isCjsBundle || hasStaticFiles;
-
-  // Vite middleware for local development / pure static serving for production
-  if (!isProduction) {
+  // Vite middleware for development vs static files for production
+  if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -63,6 +55,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
+    const distPath = path.join(process.cwd(), 'dist');
     console.log(`[Server] Serving static production files from: ${distPath}`);
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
