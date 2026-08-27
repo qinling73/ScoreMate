@@ -16,6 +16,7 @@ import { DeductionConfirmModal } from './components/DeductionConfirmModal';
 import { ServerAdminModal } from './components/ServerAdminModal';
 import { AvatarPickerModal } from './components/AvatarPickerModal';
 import { ShareImageModal } from './components/ShareImageModal';
+import { NetworkDiagnosticModal } from './components/NetworkDiagnosticModal';
 import { setStoredAvatar } from './utils/avatar';
 import { 
   Gamepad2, 
@@ -43,6 +44,7 @@ export default function App() {
   const [customNotification, setCustomNotification] = useState<CustomNotification | null>(null);
   const [urlRoomCode, setUrlRoomCode] = useState<string>('');
   const [isAvatarPickerOpen, setIsAvatarPickerOpen] = useState<boolean>(false);
+  const [showDiagnosticModal, setShowDiagnosticModal] = useState<boolean>(false);
   const [shareModalConfig, setShareModalConfig] = useState<{ isOpen: boolean; defaultType: 'leaderboard' | 'logs' }>({
     isOpen: false,
     defaultType: 'leaderboard',
@@ -59,12 +61,15 @@ export default function App() {
       });
   }, []);
 
-  // Check URL pathname for /ra (Route to Admin) or ?admin=1
+  // Check URL pathname for /ra (Route to Admin), ?admin=1, or ?diag=1
   useEffect(() => {
     const pathname = window.location.pathname.toLowerCase();
     const params = new URLSearchParams(window.location.search);
     if (pathname === '/ra' || pathname === '/ra/' || params.get('admin') === '1' || params.get('ra') === '1') {
       setShowServerAdmin(true);
+    }
+    if (params.get('diag') === '1' || params.get('debug') === '1') {
+      setShowDiagnosticModal(true);
     }
   }, []);
 
@@ -706,6 +711,21 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Network Diagnostic Modal (Can be opened via footer, error banner, or ?diag=1) */}
+      <NetworkDiagnosticModal
+        isOpen={showDiagnosticModal}
+        onClose={() => {
+          setShowDiagnosticModal(false);
+          const params = new URLSearchParams(window.location.search);
+          if (params.get('diag') === '1' || params.get('debug') === '1') {
+            params.delete('diag');
+            params.delete('debug');
+            const newQuery = params.toString() ? `?${params.toString()}` : '';
+            window.history.replaceState({}, document.title, window.location.pathname + newQuery);
+          }
+        }}
+      />
     </div>
   );
 }

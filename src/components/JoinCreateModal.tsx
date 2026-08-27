@@ -4,6 +4,7 @@ import { getStoredNickname, setStoredNickname, getApiBaseUrl, setApiBaseUrl } fr
 import { getStoredAvatar, setStoredAvatar, DEFAULT_AVATAR } from '../utils/avatar';
 import { AvatarDisplay } from './AvatarDisplay';
 import { AvatarPickerModal } from './AvatarPickerModal';
+import { NetworkDiagnosticModal } from './NetworkDiagnosticModal';
 import { sounds } from '../utils/audio';
 import { 
   Gamepad2, 
@@ -20,7 +21,8 @@ import {
   Smile,
   Edit3,
   Link,
-  Check
+  Check,
+  Activity
 } from 'lucide-react';
 
 interface JoinCreateModalProps {
@@ -43,6 +45,7 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
   const [avatar, setAvatar] = useState<string>(getStoredAvatar() || DEFAULT_AVATAR);
   const [isAvatarPickerOpen, setIsAvatarPickerOpen] = useState<boolean>(false);
   const [showBackendConfig, setShowBackendConfig] = useState<boolean>(false);
+  const [isDiagnosticOpen, setIsDiagnosticOpen] = useState<boolean>(false);
   const [backendUrlInput, setBackendUrlInput] = useState<string>(getApiBaseUrl() || '');
   const [backendSavedSuccess, setBackendSavedSuccess] = useState<boolean>(false);
   
@@ -252,16 +255,26 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
 
           {/* Error Message */}
           {errorMessage && (
-            <div className="p-3 rounded-xl bg-[#FF6B6B] border-2 border-black text-white text-xs font-black shadow-brutal-sm space-y-2">
-              <div>{errorMessage}</div>
-              <button
-                type="button"
-                onClick={() => setShowBackendConfig(true)}
-                className="px-2.5 py-1 rounded-lg bg-black text-[#FFE66D] border border-black text-[11px] font-black inline-flex items-center gap-1 hover:bg-neutral-800 active:scale-95"
-              >
-                <Link className="w-3 h-3" />
-                <span>配置后端服务器地址</span>
-              </button>
+            <div className="p-3.5 rounded-2xl bg-[#FF6B6B] border-2 border-black text-white text-xs font-black shadow-brutal-sm space-y-2.5">
+              <div className="leading-snug">{errorMessage}</div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsDiagnosticOpen(true)}
+                  className="px-3 py-1.5 rounded-xl bg-black text-[#FFE66D] border border-black text-xs font-black inline-flex items-center gap-1.5 hover:bg-neutral-800 active:scale-95 cursor-pointer shadow-brutal-xs"
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                  <span>🔍 打开网络与后端诊断排查</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowBackendConfig(!showBackendConfig)}
+                  className="px-2.5 py-1.5 rounded-xl bg-white text-black border border-black text-xs font-black inline-flex items-center gap-1 hover:bg-neutral-100 active:scale-95 cursor-pointer"
+                >
+                  <Link className="w-3.5 h-3.5" />
+                  <span>快速输入地址</span>
+                </button>
+              </div>
             </div>
           )}
 
@@ -536,17 +549,32 @@ export const JoinCreateModal: React.FC<JoinCreateModalProps> = ({
           </div>
         </div>
 
-        {/* Backend configuration switcher toggle */}
-        <div className="text-center pt-1">
+        {/* Backend configuration switcher toggle & Network Diagnostic */}
+        <div className="text-center pt-1 flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => setIsDiagnosticOpen(true)}
+            className="text-[11px] text-[#4D96FF] hover:text-blue-700 font-black inline-flex items-center gap-1 transition-colors cursor-pointer bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200"
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span>🔧 网络与 API 连通性排查</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setShowBackendConfig(!showBackendConfig)}
-            className="text-[11px] text-neutral-500 font-bold hover:text-black inline-flex items-center gap-1 transition-colors"
+            className="text-[11px] text-neutral-500 font-bold hover:text-black inline-flex items-center gap-1 transition-colors cursor-pointer"
           >
             <Link className="w-3 h-3" />
-            <span>{getApiBaseUrl() ? `当前后端: ${getApiBaseUrl()}` : '配置独立后端服务地址 (VITE_API_URL)'}</span>
+            <span>{getApiBaseUrl() ? `后端: ${getApiBaseUrl()}` : '手动填入后端地址'}</span>
           </button>
         </div>
+
+        {/* Network Diagnostic Modal */}
+        <NetworkDiagnosticModal
+          isOpen={isDiagnosticOpen}
+          onClose={() => setIsDiagnosticOpen(false)}
+        />
       </div>
     </div>
   );
